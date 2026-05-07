@@ -37,7 +37,7 @@
 |   |   |
 |---|---|
 | 🔒 **100% local** | SQLite, local Whisper, local FFmpeg. Your scripts, transcripts, downloads, and generated videos never leave your machine. |
-| 🔑 **BYOK** | Bring your own Anthropic / OpenAI / YouTube / Pexels keys. Encrypted at rest with AES-256. There is no ViralMint backend in the middle. |
+| 🔑 **BYOK** | Bring your own Anthropic / OpenAI / OpenRouter / YouTube / Pexels keys. Encrypted at rest with AES-256. There is no ViralMint backend in the middle. |
 | 📱 **Phone-first when you want it** | Two-way chat with the planner agent over Telegram, WhatsApp, Discord, or Slack. Get job notifications in the same thread. |
 | 🤖 **Agent-based, not a chat wrapper** | Scout, Download, Analyzer, Generator, Uploader, and Planner — six purpose-built agents orchestrated by streaming AI chat. |
 | 🆓 **Free out of the box** | Edge TTS (400+ voices), local Whisper, royalty-free music, Pexels stock — all the heavy stuff is free. Pay only for what you choose to upgrade. |
@@ -71,7 +71,7 @@ python run.py
 
 The first run installs frontend deps, builds the SPA, starts the API, and opens your browser at **http://localhost:16888**.
 
-> 💡 **Don't have an API key yet?** Open Settings → AI Provider after launch and paste your Anthropic or OpenAI key directly into the UI. Edge TTS, Whisper, FFmpeg, and yt-dlp work offline with zero configuration.
+> 💡 **Don't have an API key yet?** Open Settings → AI Provider after launch and paste your Anthropic, OpenAI, or OpenRouter key directly into the UI. OpenRouter is a unified gateway — a single key gets you Claude, GPT, Gemini, Llama, and Mistral. Edge TTS, Whisper, FFmpeg, and yt-dlp work offline with zero configuration.
 
 ### Build a desktop `.app` from source (optional)
 
@@ -209,7 +209,7 @@ Every key can be set in `.env` *or* per-user inside the app under Settings — w
 
 | For | Provider | Where | Cost |
 |:----|:---------|:------|:-----|
-| AI chat, scripting, analysis | **Anthropic** *or* **OpenAI** | [console.anthropic.com](https://console.anthropic.com) / [platform.openai.com](https://platform.openai.com/api-keys) — Settings → AI Provider | Pay-per-use |
+| AI chat, scripting, analysis | **Anthropic** · **OpenAI** · **OpenRouter** | [console.anthropic.com](https://console.anthropic.com) · [platform.openai.com](https://platform.openai.com/api-keys) · [openrouter.ai/keys](https://openrouter.ai/keys) — Settings → AI Provider | Pay-per-use |
 | YouTube scouting · comments · My Channels | YouTube Data API v3 | [console.cloud.google.com/apis/credentials](https://console.cloud.google.com/apis/credentials) — Settings → Service API Keys | Free 10K units/day |
 | Stock footage | Pexels | [pexels.com/api](https://www.pexels.com/api/) | Free |
 | Premium voiceover (optional) | OpenAI TTS | [platform.openai.com](https://platform.openai.com/api-keys) | Pay-per-use |

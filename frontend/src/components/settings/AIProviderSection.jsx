@@ -16,16 +16,19 @@ import useAppStore from "../../store/appStore"
 const PROVIDER_LABEL = {
   anthropic: "Anthropic (Claude)",
   openai: "OpenAI (GPT)",
+  openrouter: "OpenRouter (Claude / GPT / Gemini / Llama)",
 }
 
 const KEY_PLACEHOLDER = {
   anthropic: "sk-ant-...",
   openai: "sk-...",
+  openrouter: "sk-or-...",
 }
 
 const KEY_HINT = {
   anthropic: "Get yours at console.anthropic.com → API Keys",
   openai: "Get yours at platform.openai.com → API Keys",
+  openrouter: "One key, every model — get yours at openrouter.ai/keys",
 }
 
 export default function AIProviderSection({ settings, updateSettings }) {
@@ -184,8 +187,9 @@ export default function AIProviderSection({ settings, updateSettings }) {
   return (
     <Stack spacing={2}>
       <Typography variant="body2" color="text.secondary">
-        Bring your own Anthropic or OpenAI API key. Keys are encrypted (AES-256) before storage and
-        never leave your machine except when calling the provider directly.
+        Bring your own Anthropic, OpenAI, or OpenRouter API key. Keys are encrypted (AES-256) before
+        storage and never leave your machine except when calling the provider directly. OpenRouter
+        is a unified gateway — one key, access to Claude / GPT / Gemini / Llama / Mistral.
       </Typography>
 
       <FormControl size="small" fullWidth>
@@ -198,6 +202,7 @@ export default function AIProviderSection({ settings, updateSettings }) {
         >
           <MenuItem value="anthropic">Anthropic (Claude)</MenuItem>
           <MenuItem value="openai">OpenAI (GPT)</MenuItem>
+          <MenuItem value="openrouter">OpenRouter (Claude / GPT / Gemini / Llama)</MenuItem>
         </Select>
       </FormControl>
 

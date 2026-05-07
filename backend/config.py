@@ -36,9 +36,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./viralmint.db"
 
     # ── AI Providers (BYOK) ───────────────────────────
-    # Either ANTHROPIC_API_KEY or OPENAI_API_KEY is required for AI features.
+    # Set at least one. OpenRouter unlocks Claude / GPT / Gemini / Llama
+    # / Mistral through a single key — handy if you want to mix premium
+    # models without managing multiple provider accounts.
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
 
     # ── Service keys (BYOK) ───────────────────────────
     # All optional — features gracefully degrade when keys are missing.

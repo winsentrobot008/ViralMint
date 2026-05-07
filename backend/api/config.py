@@ -7,8 +7,10 @@ router = APIRouter()
 
 _DEFAULTS = {
     "model_registry": {
-        # Models verified May 2026. Defaults pick the best price/perf tier:
-        # Sonnet for Anthropic, GPT-5.4 mini for OpenAI.
+        # Models verified May 2026. Anthropic / OpenAI defaults pick the
+        # best price/perf tier; OpenRouter defaults to a premium model
+        # because BYOK users routing through OpenRouter typically want
+        # access to the top tier without juggling multiple provider keys.
         "anthropic": {
             "default_model": "claude-sonnet-4-6",
             "models": [
@@ -25,6 +27,24 @@ _DEFAULTS = {
                 "gpt-5.4-mini",
                 "gpt-5.4",
                 "gpt-5.5",
+            ],
+        },
+        # OpenRouter slugs use the vendor/model format. Verified live
+        # against https://openrouter.ai/api/v1/models on 2026-05-07. If
+        # you want a model that isn't here, OpenRouter accepts any of its
+        # published slugs — but the dropdown only exposes this curated
+        # set so users don't have to guess.
+        "openrouter": {
+            "default_model": "anthropic/claude-opus-4.7",
+            "models": [
+                "anthropic/claude-opus-4.7",
+                "anthropic/claude-opus-4.6-fast",
+                "anthropic/claude-sonnet-4.6",
+                "openai/gpt-5.5",
+                "openai/gpt-5.4",
+                "openai/gpt-5.4-mini",
+                "google/gemini-3.1-pro-preview",
+                "google/gemini-3.1-flash-lite",
             ],
         },
     },
