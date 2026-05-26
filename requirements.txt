@@ -10,7 +10,7 @@ aiosqlite==0.22.1
 alembic==1.18.4
 
 # Security
-cryptography==43.0.0
+cryptography>=46.0.6,<47
 python-dotenv==1.2.2
 pydantic-settings==2.14.1
 
@@ -34,11 +34,14 @@ faster-whisper
 
 # Video generation
 moviepy==1.0.3
-# Pillow >=11.1 because neonize (WhatsApp) requires it. moviepy 1.0.3 is from
-# 2020 and uses Image.ANTIALIAS / Image.BICUBIC, which were removed in Pillow
-# 10. We monkeypatch those at backend startup if needed (see ffmpeg_service /
-# video_utils). If you bump moviepy to 2.x in the future, drop the patches.
-Pillow>=11.1.0,<12.0
+# Pillow >=12.2 closes 6 CVEs (CVE-2026-25990 / 40192 / 42308–11) found by
+# pip-audit on 2026-05-26. The Image.ANTIALIAS / Image.BICUBIC monkeypatch
+# in backend/main.py still applies — those constants alias
+# Image.Resampling.LANCZOS / BICUBIC, which are stable through Pillow 12.x.
+# moviepy 1.0.3 (legacy dep, no current imports — kept for compat) still
+# expects the removed ANTIALIAS constant; the patch handles that case.
+# If you ever drop moviepy from this file, the patch in main.py can go too.
+Pillow>=12.2.0,<13.0
 
 # Multi-TTS providers
 edge-tts>=6.1.0
