@@ -53,3 +53,8 @@ desktop/release/
 __MACOSX/
 .AppleDouble
 .LSOverride
+
+# Binary assets (serve via CDN)
+docs/screenshots/*.webp
+frontend/public/*.png
+frontend/public/favicon.ico

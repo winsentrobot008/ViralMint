@@ -140,9 +140,10 @@ if __name__ == "__main__":
 
     build_frontend()
 
+    host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "16888"))
-    dev_mode = os.getenv("DEBUG", "true").lower() == "true"
-    start_uvicorn(port=port, reload=dev_mode)
+    dev_mode = os.getenv("DEBUG", "true").lower() == "true" and host == "127.0.0.1"
+    start_uvicorn(host=host, port=port, reload=dev_mode)
     open_browser(port=port)
 
     print(f"\n✨ ViralMint running at http://localhost:{port}\n")

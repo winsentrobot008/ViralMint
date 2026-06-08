@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local
+
+# Docs (not needed at runtime)
+docs/
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SECURITY.md
+LEGAL.md
+
+# Tests (not needed at runtime)
+tests/
+
+# Desktop app (not needed for HF Spaces)
+desktop/

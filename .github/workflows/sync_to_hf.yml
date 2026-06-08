@@ -1,9 +1,8 @@
-name: Sync to Hugging Face Space
+name: sync
 
 on:
   push:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
   sync:
@@ -11,12 +10,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-          lfs: true
-
       - name: Push to Hugging Face Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git push --force https://winsentrobot008:$HF_TOKEN@huggingface.co/spaces/aoogoost/ViralMint main
+          git remote add hf https://huggingface.co/spaces/aoogoost/ViralMint
+          git push hf main --force
