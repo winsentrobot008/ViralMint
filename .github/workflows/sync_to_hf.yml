@@ -11,6 +11,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git remote add hf https://huggingface.co/spaces/aoogoost/ViralMint
-          git push hf main --force
+          git push --force https://winsentrobot008:$HF_TOKEN@huggingface.co/spaces/aoogoost/ViralMint main
