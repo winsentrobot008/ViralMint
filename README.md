@@ -1,3 +1,12 @@
+---
+title: ViralMint
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 <div align="center">
 
 <img src="frontend/public/icon-192.png" alt="ViralMint" width="96" height="96" />
