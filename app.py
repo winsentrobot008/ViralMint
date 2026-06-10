@@ -62,6 +62,76 @@ except ImportError:
 
 
 # =====================================================================
+# Config persistence (local JSON file with Fernet-encrypted keys)
+# =====================================================================
+import json
+from pathlib import Path
+from cryptography.fernet import Fernet
+
+CONFIG_FILE = Path("config.json")
+API_KEY_MASK = "••••••••"
+
+
+def _get_cipher() -> Fernet:
+    from backend.config import settings
+    return Fernet(settings.ENCRYPTION_KEY.encode())
+
+
+def _load_config() -> dict:
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_config(data: dict):
+    CONFIG_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def save_settings(provider: str, model: str, api_key: str):
+    """Persist provider, model, and encrypted API key to config.json."""
+    try:
+        cfg = _load_config()
+        cfg["ai_provider"] = provider
+        cfg["ai_model"] = model
+        if api_key:
+            cipher = _get_cipher()
+            cfg["ai_api_key_encrypted"] = cipher.encrypt(api_key.encode()).decode()
+        _save_config(cfg)
+        gr.Info("设置保存成功！" if _LANG == "zh" else "Settings saved successfully!")
+    except Exception as e:
+        gr.Warning(f"保存失败: {e}")
+    masked = API_KEY_MASK if cfg.get("ai_api_key_encrypted") else ""
+    return [
+        gr.update(value=provider),
+        gr.update(value=model),
+        gr.update(value=masked),
+    ]
+
+
+def load_settings():
+    """Load persisted config and return initial values for the three inputs."""
+    cfg = _load_config()
+    provider = cfg.get("ai_provider", "Anthropic")
+    model = cfg.get("ai_model", "claude-sonnet-4-6")
+    masked = API_KEY_MASK if cfg.get("ai_api_key_encrypted") else ""
+    model_options = {
+        "Anthropic": ["claude-sonnet-4-6", "claude-opus-4-7"],
+        "OpenAI": ["gpt-5.4-mini", "gpt-5.4"],
+        "OpenRouter": ["anthropic/claude-opus-4.7", "openai/gpt-5.4-mini", "google/gemini-2.0-flash"],
+        "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
+    }
+    choices = model_options.get(provider, ["claude-sonnet-4-6", "claude-opus-4-7"])
+    return [
+        gr.update(choices=choices, value=model),
+        gr.update(value=model),
+        gr.update(value=masked),
+    ]
+
+
+# =====================================================================
 # Business logic functions (called by Gradio events)
 # =====================================================================
 
@@ -385,6 +455,12 @@ def build_ui():
 
                             save_settings_btn = gr.Button(_("save_settings"), variant="primary")
 
+                            save_settings_btn.click(
+                                fn=save_settings,
+                                inputs=[provider_select, model_input, api_key_input],
+                                outputs=[provider_select, model_input, api_key_input],
+                            )
+
                     with gr.TabItem(_("service_keys")):
                         gr.Markdown(f"_{_('service_keys_desc')}_")
                         with gr.Row():
@@ -577,6 +653,13 @@ def build_ui():
             outputs=[lang_dropdown, title_markdown] +
             [tab_chat, tab_scout, tab_library, tab_channels, tab_stock, tab_clips, tab_settings, tab_messaging],
             # In practice, all components should be listed. For brevity, the main structure updates.
+        )
+
+        # ─── Load persisted settings on page load ───────────────────
+        demo.load(
+            fn=load_settings,
+            inputs=None,
+            outputs=[model_input, model_input, api_key_input],
         )
 
         # ─── Chat event handlers ────────────────────────────────────
