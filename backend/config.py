@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
 
     # ── Service keys (BYOK) ───────────────────────────
     # All optional — features gracefully degrade when keys are missing.

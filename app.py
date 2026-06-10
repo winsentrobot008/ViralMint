@@ -352,7 +352,7 @@ def build_ui():
                         with gr.Column():
                             gr.Markdown(f"_{_('ai_provider_desc')}_")
                             provider_select = gr.Dropdown(
-                                choices=["Anthropic", "OpenAI", "OpenRouter"],
+                                choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"],
                                 value="Anthropic",
                                 label=_("provider"),
                             )
@@ -366,6 +366,24 @@ def build_ui():
                                 label=_("api_key"),
                                 type="password",
                             )
+                            def update_model_for_provider(provider):
+                                suggestions = {
+                                    "Anthropic": "claude-sonnet-4-6",
+                                    "OpenAI": "gpt-5.4-mini",
+                                    "OpenRouter": "anthropic/claude-opus-4.7",
+                                    "DeepSeek": "deepseek-chat",
+                                }
+                                return gr.update(
+                                    value=suggestions.get(provider, ""),
+                                    placeholder=suggestions.get(provider, ""),
+                                )
+
+                            provider_select.change(
+                                fn=update_model_for_provider,
+                                inputs=[provider_select],
+                                outputs=[model_input],
+                            )
+
                             save_settings_btn = gr.Button(_("save_settings"), variant="primary")
 
                     with gr.TabItem(_("service_keys")):
@@ -506,9 +524,9 @@ def build_ui():
                 gr.TabItem(label=t("ai_provider")),
                 gr.TabItem(label=t("service_keys")),
                 gr.TabItem(label=t("system_health")),
-                gr.Markdown(f"_{t('ai_provider_desc')}_"),
-                gr.Dropdown(label=t("provider")),
-                gr.Textbox(label=t("model")),
+            gr.Markdown(f"_{t('ai_provider_desc')}_"),
+            gr.Dropdown(choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"], label=t("provider")),
+            gr.Textbox(label=t("model")),
                 gr.Textbox(placeholder=t("api_key_placeholder"), label=t("api_key")),
                 gr.Button(t("save_settings")),
                 gr.Markdown(f"_{t('service_keys_desc')}_"),

@@ -342,6 +342,8 @@ async def get_health():
     has_ai_key = bool(
         app_settings.ANTHROPIC_API_KEY
         or app_settings.OPENAI_API_KEY
+        or app_settings.OPENROUTER_API_KEY
+        or app_settings.DEEPSEEK_API_KEY
         or (s and s.ai_api_key_encrypted)
     )
     health["ai_provider"] = {"status": "configured" if has_ai_key else "not_configured"}

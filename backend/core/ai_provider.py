@@ -28,6 +28,7 @@ class AIProvider(str, Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     OPENROUTER = "openrouter"
+    DEEPSEEK = "deepseek"
 
 
 PROVIDER_DEFAULTS = {
@@ -37,6 +38,7 @@ PROVIDER_DEFAULTS = {
     # model so the experience matches the gateway's value prop. Users
     # can pick a cheaper model in Settings → Model dropdown.
     AIProvider.OPENROUTER: "anthropic/claude-opus-4.7",
+    AIProvider.DEEPSEEK:   "deepseek-chat",
 }
 
 # OpenRouter's optional analytics headers — show up on the public model
@@ -71,6 +73,9 @@ class AIClient:
                 yield chunk
         elif self.provider == AIProvider.OPENROUTER:
             async for chunk in self._openrouter_stream(messages, system, max_tokens):
+                yield chunk
+        elif self.provider == AIProvider.DEEPSEEK:
+            async for chunk in self._deepseek_stream(messages, system, max_tokens):
                 yield chunk
 
     async def chat(
@@ -115,6 +120,38 @@ class AIClient:
         uses_completion_tokens = (
             m.startswith(("gpt-5", "o1", "o3", "o4"))
         )
+        token_kwargs = (
+            {"max_completion_tokens": max_tokens}
+            if uses_completion_tokens
+            else {"max_tokens": max_tokens}
+        )
+
+        stream = await client.chat.completions.create(
+            model=self.model,
+            messages=full_messages,
+            stream=True,
+            **token_kwargs,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
+    async def _deepseek_stream(self, messages, system, max_tokens):
+        """DeepSeek is OpenAI-compatible — same client, different base URL."""
+        import openai
+        client = openai.AsyncOpenAI(
+            api_key=self.api_key,
+            base_url="https://api.deepseek.com",
+            timeout=55.0,
+        )
+        full_messages = []
+        if system:
+            full_messages.append({"role": "system", "content": system})
+        full_messages.extend(messages)
+
+        m = self.model.lower()
+        uses_completion_tokens = m.startswith(("deepseek-reasoner"))
         token_kwargs = (
             {"max_completion_tokens": max_tokens}
             if uses_completion_tokens
@@ -223,8 +260,15 @@ def get_ai_client(user_settings=None, **_kwargs) -> AIClient:
             api_key=settings.OPENROUTER_API_KEY,
             model=user_model,
         )
+    if settings.DEEPSEEK_API_KEY:
+        return AIClient(
+            provider=AIProvider.DEEPSEEK,
+            api_key=settings.DEEPSEEK_API_KEY,
+            model=user_model,
+        )
 
     raise AIKeyMissingError(
-        "No AI provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or "
-        "OPENROUTER_API_KEY in your .env, or configure your provider and key in Settings."
+        "No AI provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, "
+        "OPENROUTER_API_KEY, or DEEPSEEK_API_KEY in your .env, or configure "
+        "your provider and key in Settings."
     )
