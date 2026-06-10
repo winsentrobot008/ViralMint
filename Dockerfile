@@ -1,4 +1,4 @@
-# Force rebuild timestamp: 2026-06-09-v2
+# Force rebuild timestamp: 2026-06-10-v3
 FROM python:3.11-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
