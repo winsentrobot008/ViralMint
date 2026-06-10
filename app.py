@@ -1,4 +1,5 @@
 import sys
+import os
 from types import ModuleType
 
 # Mock the missing audioop module for Python 3.13 compatibility
@@ -15,4 +16,8 @@ def greet(name):
     return f"Hello, {name}! Welcome to ViralMint."
 
 demo = gr.Interface(fn=greet, inputs="text", outputs="text")
-demo.launch()
+demo.launch(
+    server_name=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
+    server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
+    share=False
+)
