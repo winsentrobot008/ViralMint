@@ -356,10 +356,10 @@ def build_ui():
                                 value="Anthropic",
                                 label=_("provider"),
                             )
-                            model_input = gr.Textbox(
-                                placeholder="claude-3-opus-20240229",
+                            model_input = gr.Dropdown(
+                                choices=["claude-sonnet-4-6", "claude-opus-4-7"],
+                                value="claude-sonnet-4-6",
                                 label=_("model"),
-                                value="claude-3-opus-20240229",
                             )
                             api_key_input = gr.Textbox(
                                 placeholder=_("api_key_placeholder"),
@@ -367,16 +367,15 @@ def build_ui():
                                 type="password",
                             )
                             def update_model_for_provider(provider):
-                                suggestions = {
-                                    "Anthropic": "claude-sonnet-4-6",
-                                    "OpenAI": "gpt-5.4-mini",
-                                    "OpenRouter": "anthropic/claude-opus-4.7",
-                                    "DeepSeek": "deepseek-chat",
+                                model_options = {
+                                    "Anthropic": ["claude-sonnet-4-6", "claude-opus-4-7"],
+                                    "OpenAI": ["gpt-5.4-mini", "gpt-5.4"],
+                                    "OpenRouter": ["anthropic/claude-opus-4.7", "openai/gpt-5.4-mini", "google/gemini-2.0-flash"],
+                                    "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
                                 }
-                                return gr.update(
-                                    value=suggestions.get(provider, ""),
-                                    placeholder=suggestions.get(provider, ""),
-                                )
+                                choices = model_options.get(provider, [])
+                                value = choices[0] if choices else ""
+                                return gr.update(choices=choices, value=value)
 
                             provider_select.change(
                                 fn=update_model_for_provider,
@@ -525,8 +524,8 @@ def build_ui():
                 gr.TabItem(label=t("service_keys")),
                 gr.TabItem(label=t("system_health")),
             gr.Markdown(f"_{t('ai_provider_desc')}_"),
-            gr.Dropdown(choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"], label=t("provider")),
-            gr.Textbox(label=t("model")),
+                gr.Dropdown(choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"], label=t("provider")),
+            gr.Dropdown(choices=["claude-sonnet-4-6", "claude-opus-4-7"], label=t("model")),
                 gr.Textbox(placeholder=t("api_key_placeholder"), label=t("api_key")),
                 gr.Button(t("save_settings")),
                 gr.Markdown(f"_{t('service_keys_desc')}_"),
