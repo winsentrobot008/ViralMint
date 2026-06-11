@@ -298,6 +298,7 @@ def build_ui():
                                 interactive=True,
                             )
                             run_pipeline_btn = gr.Button("🚀 Run Full Pipeline", variant="primary", size="lg", scale=2)
+                        scout_output = gr.Textbox(label=_("scout_results"), visible=False)
                         gr.Markdown("---")
                         gr.Markdown("### 💬 Agent Chat")
                         chatbot = gr.Chatbot(
