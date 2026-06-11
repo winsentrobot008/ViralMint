@@ -144,11 +144,34 @@ def load_settings():
 # Business logic functions (called by Gradio events)
 # =====================================================================
 
+def _normalize_chat_history(history):
+    """Gradio 6.0 requires a list of dicts with 'role' and 'content' keys.
+    Convert legacy tuple/list formats gracefully."""
+    if history is None:
+        return []
+    if isinstance(history, list):
+        normalized = []
+        for item in history:
+            if isinstance(item, dict) and "role" in item and "content" in item:
+                normalized.append(item)
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                # Legacy Gradio format: (user_msg, bot_msg)
+                normalized.append({"role": "user", "content": str(item[0])})
+                normalized.append({"role": "assistant", "content": str(item[1])})
+            elif isinstance(item, dict) and "role" not in item:
+                # Dict without 'role' — assume 'content' is the message, treat as assistant
+                normalized.append({"role": "assistant", "content": str(item.get("content", ""))})
+            else:
+                # Fallback: stringify
+                normalized.append({"role": "assistant", "content": str(item)})
+        return normalized
+    return []
+
 def chat_with_agent(message, history):
     """Send a message to the AI planner agent. History must be a list of dicts with 'role' and 'content' keys."""
     if not message.strip():
-        return history, gr.update(value="")
-    history = history or []
+        return history or [], gr.update(value="")
+    history = _normalize_chat_history(history)
     # Append user message as dict
     history.append({"role": "user", "content": message})
     if PLANNER_AVAILABLE:
@@ -186,6 +209,9 @@ def run_pipeline(url, platform, lang):
     thinking = f"[{now}] 🧠 Agent#1 Scout (DeepSeek) — 开始分析趋势内容: {url}\n  平台: {platform}\n  提取关键词、热度、受众画像...\n"
     return get_text(lang, "pipeline_running"), progress, thinking
 
+def new_chat():
+    return [], gr.update(value=_("chat_input_placeholder"))
+
 # Pipeline agent simulation for demo purposes
 def simulate_pipeline_steps(url, progress_box, thinking_box):
     import time
@@ -199,6 +225,32 @@ def simulate_pipeline_steps(url, progress_box, thinking_box):
     for i, (agent, msg) in enumerate(steps):
         time.sleep(1.5)
         yield progress_box, f"[{time.strftime('%H:%M:%S')}] 🧠 {agent} (DeepSeek) — {msg}\n" + (thinking_box if i == 0 else "")
+
+def do_pipeline(url, platform, lang):
+    import asyncio
+    try:
+        status_msg, progress_html, thinking = run_pipeline(url, platform, lang)
+        return status_msg, progress_html, thinking
+    except asyncio.TimeoutError:
+        import datetime
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        fallback_progress = f"""
+        <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
+          <div><span style="color:#ef4444;">✗</span> [{now}] <b>Agent#1 Scout</b> — 超时 (Timeout), 使用降级回退</div>
+          <div style="color:#34D399;">✓ [{now}] Agent#2 Download — 跳过 (无有效URL)</div>
+          <div style="color:#94a3b8;">⚠️ 管线中断 — YouTube API 未响应, 请检查网络或 API Key</div>
+        </div>"""
+        fallback_thinking = f"[{now}] ⚠️ Scout 超时回退: YouTube API 在 20s 内未响应, 跳过搜寻步骤\n"
+        return get_text(lang, "pipeline_running"), fallback_progress, fallback_thinking
+    except Exception as e:
+        import datetime
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        error_progress = f"""
+        <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
+          <div><span style="color:#ef4444;">✗</span> [{now}] <b>管线错误</b>: {str(e)[:100]}</div>
+        </div>"""
+        error_thinking = f"[{now}] ❌ 管线异常: {str(e)}\n"
+        return get_text(lang, "pipeline_running"), error_progress, error_thinking
 
 # =====================================================================
 # Language mapping for dropdown
@@ -618,38 +670,9 @@ def build_ui():
         msg_input.submit(respond, [msg_input, chatbot], [chatbot, msg_input])
         send_btn.click(respond, [msg_input, chatbot], [chatbot, msg_input])
 
-        def new_chat():
-            return [], gr.update(value=_("chat_input_placeholder"))
-
         new_chat_btn.click(new_chat, outputs=[chatbot, msg_input])
 
         # ─── Pipeline event handler (with safety timeout) ───────────
-        def do_pipeline(url, platform, lang):
-            import asyncio
-            try:
-                status_msg, progress_html, thinking = run_pipeline(url, platform, lang)
-                return status_msg, progress_html, thinking
-            except asyncio.TimeoutError:
-                import datetime
-                now = datetime.datetime.now().strftime("%H:%M:%S")
-                fallback_progress = f"""
-                <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
-                  <div><span style="color:#ef4444;">✗</span> [{now}] <b>Agent#1 Scout</b> — 超时 (Timeout), 使用降级回退</div>
-                  <div style="color:#34D399;">✓ [{now}] Agent#2 Download — 跳过 (无有效URL)</div>
-                  <div style="color:#94a3b8;">⚠️ 管线中断 — YouTube API 未响应, 请检查网络或 API Key</div>
-                </div>"""
-                fallback_thinking = f"[{now}] ⚠️ Scout 超时回退: YouTube API 在 20s 内未响应, 跳过搜寻步骤\n"
-                return get_text(lang, "pipeline_running"), fallback_progress, fallback_thinking
-            except Exception as e:
-                import datetime
-                now = datetime.datetime.now().strftime("%H:%M:%S")
-                error_progress = f"""
-                <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
-                  <div><span style="color:#ef4444;">✗</span> [{now}] <b>管线错误</b>: {str(e)[:100]}</div>
-                </div>"""
-                error_thinking = f"[{now}] ❌ 管线异常: {str(e)}\n"
-                return get_text(lang, "pipeline_running"), error_progress, error_thinking
-
         run_pipeline_btn.click(
             fn=do_pipeline,
             inputs=[scout_url, scout_platform, lang_state],
