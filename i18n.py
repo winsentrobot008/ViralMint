@@ -220,6 +220,9 @@ LOCALIZATION = {
         "dashboard_agents": "Agent Status",
         "dashboard_agents_value": "5 / 5 <span class=\"badge\">READY</span>",
 
+        # ─── Dashboard AI Config Tab ─────────────────────────
+        "tab_ai_config": "AI Config",
+
         # ─── Dashboard Control Center ────────────────────────
         "tab_control": "Control Center",
         "section_scout_launcher": "Trend Scout & Pipeline Launcher",
@@ -485,6 +488,9 @@ LOCALIZATION = {
         "dashboard_targets_value": "TikTok / YouTube Shorts",
         "dashboard_agents": "智能体状态",
         "dashboard_agents_value": "5 / 5 <span class=\"badge\">就绪</span>",
+
+        # ─── Dashboard AI Config Tab ─────────────────────────
+        "tab_ai_config": "AI 配置",
 
         # ─── Dashboard Control Center ────────────────────────
         "tab_control": "控制中心",

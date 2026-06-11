@@ -283,7 +283,51 @@ def build_ui():
             with gr.Column(scale=1, min_width=420):
                 with gr.Tabs(elem_classes="nav-tabs") as left_tabs:
 
-                    # ── Tab 1: Control Center ────────────────────────
+                    # ── Tab 1: AI Config (provider, model, API key) ──
+                    with gr.TabItem(f"⚙️ {_('tab_ai_config')}", id="ai_config") as tab_ai_config:
+                        gr.Markdown(f"_{_('ai_provider_desc')}_")
+                        with gr.Row():
+                            provider_select = gr.Dropdown(
+                                choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"],
+                                value="DeepSeek",
+                                label=_("provider"),
+                            )
+                            model_input = gr.Dropdown(
+                                choices=["deepseek-chat", "deepseek-reasoner"],
+                                value="deepseek-chat",
+                                label=_("model"),
+                            )
+                        api_key_input = gr.Textbox(
+                            placeholder=_("api_key_placeholder"),
+                            label=_("api_key"),
+                            type="password",
+                        )
+
+                        def update_model_for_provider(provider):
+                            model_options = {
+                                "Anthropic": ["claude-sonnet-4-6", "claude-opus-4-7"],
+                                "OpenAI": ["gpt-5.4-mini", "gpt-5.4"],
+                                "OpenRouter": ["anthropic/claude-opus-4.7", "openai/gpt-5.4-mini", "google/gemini-2.0-flash"],
+                                "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
+                            }
+                            choices = model_options.get(provider, [])
+                            value = choices[0] if choices else ""
+                            return gr.update(choices=choices, value=value)
+
+                        provider_select.change(
+                            fn=update_model_for_provider,
+                            inputs=[provider_select],
+                            outputs=[model_input],
+                        )
+
+                        save_settings_btn = gr.Button(_("save_settings"), variant="primary")
+                        save_settings_btn.click(
+                            fn=save_settings,
+                            inputs=[provider_select, model_input, api_key_input],
+                            outputs=[provider_select, model_input, api_key_input],
+                        )
+
+                    # ── Tab 2: Control Center ────────────────────────
                     with gr.TabItem(f"🎮 {_('tab_control')}", id="control") as tab_control:
                         gr.Markdown(f"### 🌐 {_('section_scout_launcher')}")
                         scout_url = gr.Textbox(
@@ -466,76 +510,6 @@ def build_ui():
                 )
 
         # =============================================================
-        # SETTINGS ACCORDION (At the bottom, collapsed by default)
-        # =============================================================
-        with gr.Accordion(f"⚙️ {_('accordion_settings')}", open=False):
-            with gr.Tabs():
-                with gr.TabItem(_("ai_provider")):
-                    gr.Markdown(f"_{_('ai_provider_desc')}_")
-                    with gr.Row():
-                        provider_select = gr.Dropdown(
-                            choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"],
-                            value="DeepSeek",
-                            label=_("provider"),
-                            scale=1,
-                        )
-                        model_input = gr.Dropdown(
-                            choices=["deepseek-chat", "deepseek-reasoner"],
-                            value="deepseek-chat",
-                            label=_("model"),
-                            scale=1,
-                        )
-                        api_key_input = gr.Textbox(
-                            placeholder=_("api_key_placeholder"),
-                            label=_("api_key"),
-                            type="password",
-                            scale=2,
-                        )
-                    save_settings_btn = gr.Button(_("save_settings"), variant="primary")
-
-                    def update_model_for_provider(provider):
-                        model_options = {
-                            "Anthropic": ["claude-sonnet-4-6", "claude-opus-4-7"],
-                            "OpenAI": ["gpt-5.4-mini", "gpt-5.4"],
-                            "OpenRouter": ["anthropic/claude-opus-4.7", "openai/gpt-5.4-mini", "google/gemini-2.0-flash"],
-                            "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
-                        }
-                        choices = model_options.get(provider, [])
-                        value = choices[0] if choices else ""
-                        return gr.update(choices=choices, value=value)
-
-                    provider_select.change(
-                        fn=update_model_for_provider,
-                        inputs=[provider_select],
-                        outputs=[model_input],
-                    )
-                    save_settings_btn.click(
-                        fn=save_settings,
-                        inputs=[provider_select, model_input, api_key_input],
-                        outputs=[provider_select, model_input, api_key_input],
-                    )
-
-                with gr.TabItem(_("service_keys")):
-                    gr.Markdown(f"_{_('service_keys_desc')}_")
-                    with gr.Row():
-                        yt_api_key = gr.Textbox(
-                            placeholder="YouTube API Key",
-                            label="YouTube",
-                            type="password",
-                        )
-                        pexels_key = gr.Textbox(
-                            placeholder="Pexels API Key",
-                            label="Pexels",
-                            type="password",
-                        )
-                    save_keys_btn = gr.Button(_("save_settings"), variant="primary")
-
-                with gr.TabItem(_("system_health")):
-                    gr.Markdown(f"## {_('system_health')}\n{_('system_health_desc')}")
-                    health_output = gr.Markdown("_Check system health..._")
-                    check_health_btn = gr.Button(_("refresh"))
-
-        # =============================================================
         # FOOTER
         # =============================================================
         gr.Markdown(elem_classes="footer-text", value="ViralMint v1.0 · AGPL-3.0 · AI Agent Factory Dashboard")
@@ -556,14 +530,13 @@ def build_ui():
                     label=t("lang_label"),
                 ),
                 gr.Markdown(f"# 🧠 ViralMint · AI Agent Factory\n{t('app_subtitle')}"),
-                gr.TabItem(label=t("tab_chat")),
-                gr.TabItem(label=t("scout_title")),
-                gr.TabItem(label=t("tab_library")),
-                gr.TabItem(label=t("tab_channels")),
-                gr.TabItem(label=t("tab_stock")),
-                gr.TabItem(label=t("tab_clips")),
-                gr.TabItem(label=t("tab_settings")),
-                gr.TabItem(label=t("tab_messaging")),
+                gr.TabItem(label=t("tab_ai_config")),
+                gr.TabItem(label=t("tab_control")),
+                gr.TabItem(label=t("tab_library_tools")),
+                gr.TabItem(label=t("tab_messaging_title")),
+                gr.TabItem(label=t("tab_channels_title")),
+                gr.TabItem(label=t("tab_stock_title")),
+                gr.TabItem(label=t("tab_clips_title")),
                 gr.Chatbot(placeholder=t("chat_no_conversations")),
                 gr.Textbox(placeholder=t("chat_input_placeholder")),
                 gr.Button(t("chat_send")),
@@ -616,7 +589,7 @@ def build_ui():
             fn=update_ui_language,
             inputs=[lang_dropdown],
             outputs=[lang_dropdown, title_markdown] +
-            [tab_control, tab_library, tab_channels, tab_stock, tab_clips, tab_messaging] +
+            [tab_ai_config, tab_control, tab_library, tab_channels, tab_stock, tab_clips, tab_messaging] +
             [chatbot, msg_input, send_btn, new_chat_btn,
              scout_url, scout_platform, scout_output,
              scout_results_list, refresh_scout_btn, downloaded_list, import_btn, open_videos_btn,
@@ -626,7 +599,7 @@ def build_ui():
              tt_url_input, tt_connect_btn, tt_channels_list,
              script_input, aspect_ratio, voice_choice, generate_video_btn, download_video_btn,
              source_video, start_time, end_time, extract_btn,
-             provider_select, downloaded_list, api_key_input, save_settings_btn, save_keys_btn, check_health_btn],
+             provider_select, api_key_input, save_settings_btn],
         )
 
         # ─── Load persisted settings on page load ───────────────────
