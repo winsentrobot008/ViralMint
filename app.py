@@ -251,28 +251,28 @@ def build_ui():
 
         with gr.Row():
             with gr.Column(scale=1, min_width=180):
-                gr.HTML("""
+                gr.HTML(f"""
                 <div class="status-card">
-                  <div class="label">🧠 Active Brain</div>
-                  <div class="value">DeepSeek <span style="color:#34D399;font-size:1.2rem;">🟢</span></div>
+                  <div class="label">🧠 {_('dashboard_brain')}</div>
+                  <div class="value">{_('dashboard_brain_value')}</div>
                 </div>""")
             with gr.Column(scale=1, min_width=200):
-                gr.HTML("""
+                gr.HTML(f"""
                 <div class="status-card">
-                  <div class="label">🏭 Pipeline Mode</div>
-                  <div class="value">Automated Short-Video Factory</div>
+                  <div class="label">🏭 {_('dashboard_pipeline')}</div>
+                  <div class="value">{_('dashboard_pipeline_value')}</div>
                 </div>""")
             with gr.Column(scale=1, min_width=180):
-                gr.HTML("""
+                gr.HTML(f"""
                 <div class="status-card">
-                  <div class="label">🎯 Target Platforms</div>
-                  <div class="value">TikTok / YouTube Shorts</div>
+                  <div class="label">🎯 {_('dashboard_targets')}</div>
+                  <div class="value">{_('dashboard_targets_value')}</div>
                 </div>""")
             with gr.Column(scale=1, min_width=160):
-                gr.HTML("""
+                gr.HTML(f"""
                 <div class="status-card">
-                  <div class="label">⚡ Agent Status</div>
-                  <div class="value">5 / 5 <span class="badge">READY</span></div>
+                  <div class="label">⚡ {_('dashboard_agents')}</div>
+                  <div class="value">{_('dashboard_agents_value')}</div>
                 </div>""")
 
         # =============================================================
@@ -284,8 +284,8 @@ def build_ui():
                 with gr.Tabs(elem_classes="nav-tabs") as left_tabs:
 
                     # ── Tab 1: Control Center ────────────────────────
-                    with gr.TabItem("🎮 Control Center", id="control") as tab_control:
-                        gr.Markdown("### 🌐 Trend Scout & Pipeline Launcher")
+                    with gr.TabItem(f"🎮 {_('tab_control')}", id="control") as tab_control:
+                        gr.Markdown(f"### 🌐 {_('section_scout_launcher')}")
                         scout_url = gr.Textbox(
                             placeholder=_("scout_url_placeholder"),
                             label=_("url_input"),
@@ -297,12 +297,12 @@ def build_ui():
                                 label=_("platform"),
                                 interactive=True,
                             )
-                            run_pipeline_btn = gr.Button("🚀 Run Full Pipeline", variant="primary", size="lg", scale=2)
+                            run_pipeline_btn = gr.Button(f"🚀 {_('btn_run_pipeline')}", variant="primary", size="lg", scale=2)
                         scout_output = gr.Textbox(label=_("scout_results"), visible=False)
                         gr.Markdown("---")
-                        gr.Markdown("### 💬 Agent Chat")
+                        gr.Markdown(f"### 💬 {_('section_agent_chat')}")
                         chatbot = gr.Chatbot(
-                            label="Agent Chat Console",
+                            label=_("label_chat_console"),
                             placeholder=_("chat_no_conversations"),
                             height=300,
                             show_label=True,
@@ -318,15 +318,15 @@ def build_ui():
                         new_chat_btn = gr.Button(_("chat_new"), variant="secondary", size="sm")
 
                     # ── Tab 2: Library / Channels / Stock / Clips / Messaging ──
-                    with gr.TabItem("📚 Library & Tools", id="library") as tab_library:
-                        gr.Markdown("### 📦 Scout Results")
+                    with gr.TabItem(f"📚 {_('tab_library_tools')}", id="library") as tab_library:
+                        gr.Markdown(f"### 📦 {_('section_scout_results')}")
                         scout_results_list = gr.Dataframe(
                             headers=[_("viral_score"), _("platform"), _("trending"), "URL"],
                             label=_("tab_scout"),
                             interactive=False,
                         )
                         refresh_scout_btn = gr.Button(_("refresh"), size="sm")
-                        gr.Markdown("### 📥 Downloaded Videos")
+                        gr.Markdown(f"### 📥 {_('section_downloaded_videos')}")
                         downloaded_list = gr.Dataframe(
                             headers=["Title", _("platform"), _("views"), _("likes"), _("analyzed")],
                             label=_("tab_downloaded"),
@@ -335,7 +335,7 @@ def build_ui():
                         with gr.Row():
                             import_btn = gr.Button(_("import_video"), variant="secondary", size="sm")
                             open_videos_btn = gr.Button(_("open_videos_folder"), size="sm")
-                        gr.Markdown("### 🎞️ Generated Videos")
+                        gr.Markdown(f"### 🎞️ {_('section_generated_videos')}")
                         generated_list = gr.Dataframe(
                             headers=["Title", _("model"), _("viral_score"), _("platform")],
                             label=_("tab_generated"),
@@ -350,8 +350,8 @@ def build_ui():
                             open_gen_btn = gr.Button(_("open_generated_folder"), size="sm")
 
                     # ── Tab 3: Messaging ──────────────────────────────
-                    with gr.TabItem("📨 Messaging", id="messaging") as tab_messaging:
-                        gr.Markdown("### 📬 Connected Platforms")
+                    with gr.TabItem(f"📨 {_('tab_messaging_title')}", id="messaging") as tab_messaging:
+                        gr.Markdown(f"### 📬 {_('section_connected_platforms')}")
                         platforms_msg = ["Telegram", "WhatsApp", "Discord", "Slack"]
                         for p in platforms_msg:
                             with gr.Accordion(p, open=False):
@@ -372,8 +372,8 @@ def build_ui():
                                 status_display = gr.Markdown(f"_{p}: {_('messaging_disconnected')}_")
 
                     # ── Tab 4: Channels ──────────────────────────────
-                    with gr.TabItem("📺 Channels", id="channels") as tab_channels:
-                        gr.Markdown("### 🔗 Connected Channels")
+                    with gr.TabItem(f"📺 {_('tab_channels_title')}", id="channels") as tab_channels:
+                        gr.Markdown(f"### 🔗 {_('section_connected_channels')}")
                         with gr.Tabs():
                             with gr.TabItem("YouTube"):
                                 yt_url_input = gr.Textbox(
@@ -399,8 +399,8 @@ def build_ui():
                                 )
 
                     # ── Tab 5: Stock Video ───────────────────────────
-                    with gr.TabItem("🎬 Stock Video", id="stock") as tab_stock:
-                        gr.Markdown("### 🎥 Generate from Script")
+                    with gr.TabItem(f"🎬 {_('tab_stock_title')}", id="stock") as tab_stock:
+                        gr.Markdown(f"### 🎥 {_('section_generate_script')}")
                         with gr.Row():
                             with gr.Column(scale=2):
                                 script_input = gr.Textbox(
@@ -425,8 +425,8 @@ def build_ui():
                                 download_video_btn = gr.Button(_("stock_download"), size="sm")
 
                     # ── Tab 6: Clip Studio ───────────────────────────
-                    with gr.TabItem("✂️ Clip Studio", id="clips") as tab_clips:
-                        gr.Markdown("### ✂️ Extract Clips")
+                    with gr.TabItem(f"✂️ {_('tab_clips_title')}", id="clips") as tab_clips:
+                        gr.Markdown(f"### ✂️ {_('section_extract_clips')}")
                         source_video = gr.Dropdown(
                             choices=["Select a downloaded video..."],
                             value="Select a downloaded video...",
@@ -441,26 +441,26 @@ def build_ui():
             # ─── RIGHT COLUMN — Real-time Visualization ─────────────
             with gr.Column(scale=1, min_width=460):
                 # Pipeline Progress Card
-                gr.Markdown("### 📊 Live Pipeline Progress")
-                pipeline_progress = gr.HTML("""
+                gr.Markdown(f"### 📊 {_('section_live_progress')}")
+                pipeline_progress = gr.HTML(f"""
                 <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
-                  <div style="color:#64748b;">⏳ Idle — waiting for pipeline trigger...</div>
+                  <div style="color:#64748b;">⏳ {_('progress_idle')}</div>
                 </div>""")
 
                 # Agent Live Thinking Window
-                gr.Markdown("### 🧠 Agent Live Thinking Window")
+                gr.Markdown(f"### 🧠 {_('section_thinking_window')}")
                 thinking_window = gr.Textbox(
                     lines=10,
                     max_lines=20,
-                    label="🤖 Agent Cross-Talk & CoT Log (智能体实时思考日志)",
-                    placeholder="Agent reasoning will stream here in real time...",
+                    label=_("thinking_label"),
+                    placeholder=_("thinking_placeholder"),
                     interactive=False,
                 )
 
                 # Video Gallery
-                gr.Markdown("### 🎬 Latest Minted Video Output")
+                gr.Markdown(f"### 🎬 {_('section_latest_video')}")
                 output_video = gr.Video(
-                    label="🎬 Latest Minted Video Output",
+                    label=_("video_output_label"),
                     height=320,
                     interactive=False,
                 )
@@ -468,7 +468,7 @@ def build_ui():
         # =============================================================
         # SETTINGS ACCORDION (At the bottom, collapsed by default)
         # =============================================================
-        with gr.Accordion("⚙️ Advanced System Configurations", open=False):
+        with gr.Accordion(f"⚙️ {_('accordion_settings')}", open=False):
             with gr.Tabs():
                 with gr.TabItem(_("ai_provider")):
                     gr.Markdown(f"_{_('ai_provider_desc')}_")

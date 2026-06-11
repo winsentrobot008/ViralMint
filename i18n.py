@@ -210,6 +210,49 @@ LOCALIZATION = {
         "saving": "Saving...",
         "settings_saved": "Settings saved successfully",
 
+        # ─── Dashboard Status Cards ──────────────────────────
+        "dashboard_brain": "Active Brain",
+        "dashboard_brain_value": "DeepSeek 🟢",
+        "dashboard_pipeline": "Pipeline Mode",
+        "dashboard_pipeline_value": "Automated Short-Video Factory",
+        "dashboard_targets": "Target Platforms",
+        "dashboard_targets_value": "TikTok / YouTube Shorts",
+        "dashboard_agents": "Agent Status",
+        "dashboard_agents_value": "5 / 5 <span class=\"badge\">READY</span>",
+
+        # ─── Dashboard Control Center ────────────────────────
+        "tab_control": "Control Center",
+        "section_scout_launcher": "Trend Scout & Pipeline Launcher",
+        "section_agent_chat": "Agent Chat",
+        "tab_library_tools": "Library & Tools",
+        "tab_messaging_title": "Messaging",
+        "tab_channels_title": "Channels",
+        "tab_stock_title": "Stock Video",
+        "tab_clips_title": "Clip Studio",
+        "section_scout_results": "Scout Results",
+        "section_downloaded_videos": "Downloaded Videos",
+        "section_generated_videos": "Generated Videos",
+        "section_connected_platforms": "Connected Platforms",
+        "section_connected_channels": "Connected Channels",
+        "section_generate_script": "Generate from Script",
+        "section_extract_clips": "Extract Clips",
+        "btn_run_pipeline": "Run Full Pipeline",
+        "label_chat_console": "Agent Chat Console",
+
+        # ─── Dashboard Right Panel ───────────────────────────
+        "section_live_progress": "Live Pipeline Progress",
+        "section_thinking_window": "Agent Live Thinking Window",
+        "section_latest_video": "Latest Minted Video Output",
+
+        # ─── Settings Accordion ──────────────────────────────
+        "accordion_settings": "Advanced System Configurations",
+
+        # ─── Agent Thinking Log ──────────────────────────────
+        "thinking_label": "Agent Cross-Talk & CoT Log (智能体实时思考日志)",
+        "thinking_placeholder": "Agent reasoning will stream here in real time...",
+        "progress_idle": "Idle — waiting for pipeline trigger...",
+        "video_output_label": "Latest Minted Video Output",
+
         # ─── Pipeline / Download ─────────────────────────────
         "url_input": "Video URL",
         "url_placeholder": "Enter YouTube, TikTok, or other video URL...",
@@ -432,6 +475,49 @@ LOCALIZATION = {
         "save_settings": "保存设置",
         "saving": "保存中...",
         "settings_saved": "设置已保存成功",
+
+        # ─── Dashboard Status Cards ──────────────────────────
+        "dashboard_brain": "当前大脑",
+        "dashboard_brain_value": "DeepSeek 🟢",
+        "dashboard_pipeline": "运行模式",
+        "dashboard_pipeline_value": "短视频自动化工厂",
+        "dashboard_targets": "目标平台",
+        "dashboard_targets_value": "TikTok / YouTube Shorts",
+        "dashboard_agents": "智能体状态",
+        "dashboard_agents_value": "5 / 5 <span class=\"badge\">就绪</span>",
+
+        # ─── Dashboard Control Center ────────────────────────
+        "tab_control": "控制中心",
+        "section_scout_launcher": "趋势搜寻与管线启动器",
+        "section_agent_chat": "智能体对话",
+        "tab_library_tools": "媒体库与工具",
+        "tab_messaging_title": "消息渠道",
+        "tab_channels_title": "频道管理",
+        "tab_stock_title": "素材视频",
+        "tab_clips_title": "剪辑工作室",
+        "section_scout_results": "搜寻结果",
+        "section_downloaded_videos": "已下载视频",
+        "section_generated_videos": "已生成视频",
+        "section_connected_platforms": "已连接平台",
+        "section_connected_channels": "已连接频道",
+        "section_generate_script": "从脚本生成",
+        "section_extract_clips": "提取剪辑片段",
+        "btn_run_pipeline": "执行全自动管线",
+        "label_chat_console": "智能体对话控制台",
+
+        # ─── Dashboard Right Panel ───────────────────────────
+        "section_live_progress": "实时管线进度",
+        "section_thinking_window": "智能体实时思考窗口",
+        "section_latest_video": "最新生成的视频",
+
+        # ─── Settings Accordion ──────────────────────────────
+        "accordion_settings": "高级系统配置",
+
+        # ─── Agent Thinking Log ──────────────────────────────
+        "thinking_label": "🤖 智能体交叉对话与思维链日志",
+        "thinking_placeholder": "智能体推理过程将在此实时展示...",
+        "progress_idle": "⏳ 空闲 — 等待管线触发...",
+        "video_output_label": "🎬 最新生成的视频",
 
         # ─── Pipeline / Download ─────────────────────────────
         "url_input": "视频链接",
