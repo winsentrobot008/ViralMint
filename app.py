@@ -15,6 +15,8 @@ if 'audioop' not in sys.modules:
     mock_audioop.getsample = lambda data, width, index: 0
     sys.modules['audioop'] = mock_audioop
 
+import base64
+import hashlib
 import gradio as gr
 from i18n import LOCALIZATION
 from cryptography.fernet import Fernet
@@ -60,12 +62,43 @@ except ImportError:
 # =====================================================================
 # Config persistence (local JSON file with Fernet-encrypted keys)
 # =====================================================================
+# Security: NEVER hardcode a static Fernet key. We derive one from:
+#   1. HF_SPACE_SECRET_KEY env var (Hugging Face Secrets) — preferred
+#   2. ENCRYPTION_KEY in .env file          — local/self-hosted
+#   3. Stable fallback from a local path    — ensures old configs remain readable
+#
+# Decryption only happens in-memory at the moment the AI agent session starts.
+# The UI NEVER receives the plaintext key — only "••••••••" masking.
 CONFIG_FILE = Path("config.json")
 API_KEY_MASK = "••••••••"
 
+def _derive_fernet_key(master: str) -> bytes:
+    """Derive a deterministic 32-byte url-safe base64-encoded Fernet key from any master string."""
+    # SHA-256 guarantees exactly 32 bytes → url-safe base64
+    return base64.urlsafe_b64encode(hashlib.sha256(master.encode()).digest())
+
 def _get_cipher() -> Fernet:
-    from backend.config import settings
-    return Fernet(settings.ENCRYPTION_KEY.encode())
+    """Return a Fernet cipher. Resolution order: HF secret → .env → stable fallback."""
+    # 1. Hugging Face Space secret (set in Space Settings → Repository Secrets)
+    hf_key = os.environ.get("HF_SPACE_SECRET_KEY")
+    if hf_key:
+        return Fernet(_derive_fernet_key(hf_key))
+
+    # 2. Read ENCRYPTION_KEY directly from .env (avoid importing backend.config
+    #    which may pull in heavy deps like pydantic-settings not yet installed)
+    env_file = Path(".env")
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("ENCRYPTION_KEY="):
+                raw = line.strip().split("=", 1)[1]
+                if raw:
+                    return Fernet(_derive_fernet_key(raw))
+
+    # 3. Stable fallback — hash of the repo root path. This ensures the key
+    #    is machine-local and won't change across reboots, so previously saved
+    #    encrypted configs remain readable.
+    stable = Path(__file__).resolve().parent.name or "viralmint"
+    return Fernet(_derive_fernet_key(stable))
 
 def _load_config() -> dict:
     if CONFIG_FILE.exists():

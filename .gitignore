@@ -11,6 +11,9 @@ venv/
 # Environment
 .env
 
+# Runtime config (contains Fernet-encrypted API keys — DO NOT COMMIT)
+config.json
+
 # Database
 viralmint.db
 viralmint.db-wal
@@ -31,6 +34,10 @@ frontend/dist/
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Backup / temporary files (may contain plaintext secrets)
+*.bak
+*.bak.*
 
 # IDE / tooling
 .vscode/
