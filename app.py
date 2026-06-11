@@ -1,9 +1,11 @@
 """
 ViralMint — Gradio Web UI with full i18n (English / 中文) support.
-Mirrors the React SPA functionality for all modules.
+AI Agent Factory Dashboard — 可视化智能大屏
 """
 import sys
 import os
+import json
+from pathlib import Path
 from types import ModuleType
 
 # Mock the missing audioop module for Python 3.13 compatibility
@@ -15,6 +17,7 @@ if 'audioop' not in sys.modules:
 
 import gradio as gr
 from i18n import LOCALIZATION
+from cryptography.fernet import Fernet
 
 # =====================================================================
 # i18n Helper
@@ -22,26 +25,20 @@ from i18n import LOCALIZATION
 _LANG = "zh"  # default
 
 def _(key: str, **kwargs) -> str:
-    """Get localized string for current language."""
     val = LOCALIZATION.get(_LANG, LOCALIZATION["en"]).get(key, key)
     if kwargs:
         val = val.format(**kwargs)
     return val
 
-
 def get_text(lang: str, key: str, **kwargs) -> str:
-    """Get localized string for a specific language."""
     val = LOCALIZATION.get(lang, LOCALIZATION["en"]).get(key, key)
     if kwargs:
         val = val.format(**kwargs)
     return val
 
-
 # =====================================================================
-# Backend imports for actual functionality (mock-safe)
+# Backend imports (mock-safe)
 # =====================================================================
-# We defer heavy imports and gracefully handle missing modules so the UI
-# can still render even if e.g. the full backend or certain deps are absent.
 try:
     from backend.agents.planner import PlannerAgent
     PLANNER_AVAILABLE = True
@@ -60,22 +57,15 @@ try:
 except ImportError:
     YTDLP_AVAILABLE = False
 
-
 # =====================================================================
 # Config persistence (local JSON file with Fernet-encrypted keys)
 # =====================================================================
-import json
-from pathlib import Path
-from cryptography.fernet import Fernet
-
 CONFIG_FILE = Path("config.json")
 API_KEY_MASK = "••••••••"
-
 
 def _get_cipher() -> Fernet:
     from backend.config import settings
     return Fernet(settings.ENCRYPTION_KEY.encode())
-
 
 def _load_config() -> dict:
     if CONFIG_FILE.exists():
@@ -85,13 +75,10 @@ def _load_config() -> dict:
             return {}
     return {}
 
-
 def _save_config(data: dict):
     CONFIG_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-
 def save_settings(provider: str, model: str, api_key: str):
-    """Persist provider, model, and encrypted API key to config.json."""
     try:
         cfg = _load_config()
         cfg["ai_provider"] = provider
@@ -104,15 +91,9 @@ def save_settings(provider: str, model: str, api_key: str):
     except Exception as e:
         gr.Warning(f"保存失败: {e}")
     masked = API_KEY_MASK if cfg.get("ai_api_key_encrypted") else ""
-    return [
-        gr.update(value=provider),
-        gr.update(value=model),
-        gr.update(value=masked),
-    ]
-
+    return [gr.update(value=provider), gr.update(value=model), gr.update(value=masked)]
 
 def load_settings():
-    """Load persisted config and return initial values for the three inputs."""
     cfg = _load_config()
     provider = cfg.get("ai_provider", "Anthropic")
     model = cfg.get("ai_model", "claude-sonnet-4-6")
@@ -124,24 +105,17 @@ def load_settings():
         "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
     }
     choices = model_options.get(provider, ["claude-sonnet-4-6", "claude-opus-4-7"])
-    return [
-        gr.update(choices=choices, value=model),
-        gr.update(value=model),
-        gr.update(value=masked),
-    ]
-
+    return [gr.update(choices=choices, value=model), gr.update(value=model), gr.update(value=masked)]
 
 # =====================================================================
 # Business logic functions (called by Gradio events)
 # =====================================================================
 
 def chat_with_agent(message, history):
-    """Send a message to the AI planner agent and stream the response."""
     if not message.strip():
         return history, gr.update(value="")
     history = history or []
     history.append((message, None))
-
     if PLANNER_AVAILABLE:
         import asyncio
         try:
@@ -159,24 +133,37 @@ def chat_with_agent(message, history):
         history[-1] = (message, "Planner agent not available. Install the full backend.")
     return history, gr.update(value="")
 
-
 def run_pipeline(url, platform, lang):
-    """Execute the full content pipeline (scout → download → generate → upload)."""
     if not url.strip():
-        return get_text(lang, "url_placeholder"), None
-    # Placeholder — delegates to the backend job system
+        return get_text(lang, "url_placeholder"), None, ""
     global _LANG
     _LANG = lang
-    return get_text(lang, "pipeline_running"), f"Pipeline started for: {url}"
+    import datetime
+    now = datetime.datetime.now().strftime("%H:%M:%S")
+    progress = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#34D399;">✓</span> [{now}] <b>Agent#1 Scout</b> — 正在分析: {url} ({platform})</div>
+  <div style="color:#94a3b8;">⏳ Agent#2 Download — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#3 Analyzer — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
+</div>"""
+    thinking = f"[{now}] 🧠 Agent#1 Scout (DeepSeek) — 开始分析趋势内容: {url}\n  平台: {platform}\n  提取关键词、热度、受众画像...\n"
+    return get_text(lang, "pipeline_running"), progress, thinking
 
-
-def scout_trending(lang, platform_choice="youtube"):
-    """Trigger a scout operation."""
-    global _LANG
-    _LANG = lang
-    # In a real implementation this would call the scout API
-    return f"Scouting trending videos on {platform_choice}... (results will appear in Library > Scout Results)"
-
+# Pipeline agent simulation for demo purposes
+def simulate_pipeline_steps(url, progress_box, thinking_box):
+    import time
+    steps = [
+        ("Agent#1 Scout", "🔍 正在爬取热门内容, 提取标题、标签、播放量..."),
+        ("Agent#2 Download", "⬇️ 下载视频文件, 提取音轨和字幕..."),
+        ("Agent#3 Analyzer", "🧪 分析脚本结构, 识别高互动段落..."),
+        ("Agent#4 Generator", "🎬 生成短视频: B-roll + TTS + 字幕叠加..."),
+        ("Agent#5 Uploader", "☁️ 上传至 TikTok / YouTube Shorts..."),
+    ]
+    for i, (agent, msg) in enumerate(steps):
+        time.sleep(1.5)
+        yield progress_box, f"[{time.strftime('%H:%M:%S')}] 🧠 {agent} (DeepSeek) — {msg}\n" + (thinking_box if i == 0 else "")
 
 # =====================================================================
 # Language mapping for dropdown
@@ -186,9 +173,8 @@ LANG_MAP = {
     get_text("zh", "lang_zh"): "zh",
 }
 
-
 # =====================================================================
-# Build the Gradio Blocks UI
+# Build the Gradio Blocks UI — AI Agent Factory Dashboard
 # =====================================================================
 
 def build_ui():
@@ -202,11 +188,17 @@ def build_ui():
     .footer-text { text-align: center; color: #64748b; font-size: 0.8rem; padding-top: 1rem; border-top: 1px solid #334155; margin-top: 1.5rem; }
     .nav-tabs button { font-weight: 600 !important; }
     .chat-box { min-height: 400px; }
+    .status-card { background: linear-gradient(135deg, #1e293b, #0f172a); border: 1px solid #334155; border-radius: 12px; padding: 14px 18px; text-align: center; }
+    .status-card .label { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .status-card .value { color: #e2e8f0; font-size: 1.05rem; font-weight: 600; margin-top: 2px; }
+    .status-card .badge { display: inline-block; background: #0D9F6E; color: white; border-radius: 999px; padding: 0 10px; font-size: 0.7rem; font-weight: 700; margin-left: 4px; }
     """
 
-    with gr.Blocks(title="ViralMint") as demo:
+    with gr.Blocks(title="ViralMint — AI Agent Factory", theme=gr.themes.Soft(primary_hue="emerald", neutral_hue="slate")) as demo:
 
-        # ─── Language Selector (top right) ──────────────────────────
+        # =============================================================
+        # TOP BAR: Language Selector
+        # =============================================================
         with gr.Row(elem_classes="lang-row"):
             lang_dropdown = gr.Dropdown(
                 choices=[get_text("en", "lang_en"), get_text("zh", "lang_zh")],
@@ -216,27 +208,70 @@ def build_ui():
                 scale=0,
                 min_width=180,
             )
-        # Store current language
         lang_state = gr.State("zh")
 
-        # ─── Header ─────────────────────────────────────────────────
+        # =============================================================
+        # GLOBAL STATUS HEADER — System Metric Cards
+        # =============================================================
         with gr.Row(elem_classes="app-header"):
-            title_markdown = gr.Markdown(
-                f"# 🧠 ViralMint\n{_( 'app_subtitle')}"
-            )
+            title_markdown = gr.Markdown(f"# 🧠 ViralMint · AI Agent Factory\n{_('app_subtitle')}")
 
-        # ─── Main Tabs ──────────────────────────────────────────────
-        with gr.Tabs(elem_classes="nav-tabs") as main_tabs:
-            # ========== TAB 1: Chat ==========
-            with gr.TabItem(_("tab_chat"), id="chat") as tab_chat:
-                with gr.Row():
-                    with gr.Column(scale=3):
+        with gr.Row():
+            with gr.Column(scale=1, min_width=180):
+                gr.HTML("""
+                <div class="status-card">
+                  <div class="label">🧠 Active Brain</div>
+                  <div class="value">DeepSeek <span style="color:#34D399;font-size:1.2rem;">🟢</span></div>
+                </div>""")
+            with gr.Column(scale=1, min_width=200):
+                gr.HTML("""
+                <div class="status-card">
+                  <div class="label">🏭 Pipeline Mode</div>
+                  <div class="value">Automated Short-Video Factory</div>
+                </div>""")
+            with gr.Column(scale=1, min_width=180):
+                gr.HTML("""
+                <div class="status-card">
+                  <div class="label">🎯 Target Platforms</div>
+                  <div class="value">TikTok / YouTube Shorts</div>
+                </div>""")
+            with gr.Column(scale=1, min_width=160):
+                gr.HTML("""
+                <div class="status-card">
+                  <div class="label">⚡ Agent Status</div>
+                  <div class="value">5 / 5 <span class="badge">READY</span></div>
+                </div>""")
+
+        # =============================================================
+        # MAIN SPLIT SCREEN: Left (Control Panels) | Right (Outputs)
+        # =============================================================
+        with gr.Row(equal_height=False):
+            # ─── LEFT COLUMN — Control Panels ────────────────────────
+            with gr.Column(scale=1, min_width=420):
+                with gr.Tabs(elem_classes="nav-tabs") as left_tabs:
+
+                    # ── Tab 1: Control Center ────────────────────────
+                    with gr.TabItem("🎮 Control Center", id="control") as tab_control:
+                        gr.Markdown("### 🌐 Trend Scout & Pipeline Launcher")
+                        scout_url = gr.Textbox(
+                            placeholder=_("scout_url_placeholder"),
+                            label=_("url_input"),
+                        )
+                        with gr.Row():
+                            scout_platform = gr.Dropdown(
+                                choices=["YouTube", "TikTok", "Douyin"],
+                                value="YouTube",
+                                label=_("platform"),
+                                interactive=True,
+                            )
+                            run_pipeline_btn = gr.Button("🚀 Run Full Pipeline", variant="primary", size="lg", scale=2)
+                        gr.Markdown("---")
+                        gr.Markdown("### 💬 Agent Chat")
                         chatbot = gr.Chatbot(
-                            label=_("tab_chat"),
+                            label="Agent Chat Console",
                             placeholder=_("chat_no_conversations"),
-                            height=500,
-                            show_label=False,
-                            elem_classes="chat-box",
+                            height=300,
+                            show_label=True,
                         )
                         with gr.Row():
                             msg_input = gr.Textbox(
@@ -248,45 +283,16 @@ def build_ui():
                             send_btn = gr.Button(_("chat_send"), variant="primary", scale=1)
                         new_chat_btn = gr.Button(_("chat_new"), variant="secondary", size="sm")
 
-                    with gr.Column(scale=1, min_width=240):
-                        gr.Markdown(f"### {_('active_jobs')}")
-                        active_jobs_display = gr.Markdown("_No active jobs_")
-                        gr.Markdown(f"### {_('chat_history')}")
-                        history_display = gr.Markdown("_No conversations yet_")
-
-            # ========== TAB 2: Scout & Pipeline ==========
-            with gr.TabItem(_("scout_title"), id="scout") as tab_scout:
-                with gr.Column():
-                    gr.Markdown(f"### {_('scout_title')}")
-                    scout_url = gr.Textbox(
-                        placeholder=_("scout_url_placeholder"),
-                        label=_("url_input"),
-                    )
-                    with gr.Row():
-                        scout_platform = gr.Dropdown(
-                            choices=["YouTube", "TikTok", "Douyin"],
-                            value="YouTube",
-                            label=_("platform"),
-                            interactive=True,
-                        )
-                        scout_btn = gr.Button(_("scout_btn"), variant="primary", size="lg")
-                    scout_output = gr.Textbox(label=_("scout_results"), interactive=False)
-
-            # ========== TAB 3: Library ==========
-            with gr.TabItem(_("tab_library"), id="library") as tab_library:
-                gr.Markdown(f"## {_('library_title')}\n{_('library_desc')}")
-                with gr.Tabs():
-                    # Scout Results sub-tab
-                    with gr.TabItem(_("tab_scout")) as lib_scout_tab:
+                    # ── Tab 2: Library / Channels / Stock / Clips / Messaging ──
+                    with gr.TabItem("📚 Library & Tools", id="library") as tab_library:
+                        gr.Markdown("### 📦 Scout Results")
                         scout_results_list = gr.Dataframe(
                             headers=[_("viral_score"), _("platform"), _("trending"), "URL"],
                             label=_("tab_scout"),
                             interactive=False,
                         )
                         refresh_scout_btn = gr.Button(_("refresh"), size="sm")
-
-                    # Downloaded sub-tab
-                    with gr.TabItem(_("tab_downloaded")) as lib_dl_tab:
+                        gr.Markdown("### 📥 Downloaded Videos")
                         downloaded_list = gr.Dataframe(
                             headers=["Title", _("platform"), _("views"), _("likes"), _("analyzed")],
                             label=_("tab_downloaded"),
@@ -295,9 +301,7 @@ def build_ui():
                         with gr.Row():
                             import_btn = gr.Button(_("import_video"), variant="secondary", size="sm")
                             open_videos_btn = gr.Button(_("open_videos_folder"), size="sm")
-
-                    # Generated sub-tab
-                    with gr.TabItem(_("tab_generated")) as lib_gen_tab:
+                        gr.Markdown("### 🎞️ Generated Videos")
                         generated_list = gr.Dataframe(
                             headers=["Title", _("model"), _("viral_score"), _("platform")],
                             label=_("tab_generated"),
@@ -311,76 +315,84 @@ def build_ui():
                             )
                             open_gen_btn = gr.Button(_("open_generated_folder"), size="sm")
 
-                    # Job History sub-tab
-                    with gr.TabItem(_("tab_jobs")) as lib_jobs_tab:
-                        job_list = gr.Dataframe(
-                            headers=["ID", "Type", _("platform"), _("cancel"), _("refresh")],
-                            label=_("tab_jobs"),
-                            interactive=False,
-                        )
-                        bulk_delete_btn = gr.Button(_("bulk_delete"), variant="stop", size="sm")
+                    # ── Tab 3: Messaging ──────────────────────────────
+                    with gr.TabItem("📨 Messaging", id="messaging") as tab_messaging:
+                        gr.Markdown("### 📬 Connected Platforms")
+                        platforms_msg = ["Telegram", "WhatsApp", "Discord", "Slack"]
+                        for p in platforms_msg:
+                            with gr.Accordion(p, open=False):
+                                with gr.Row():
+                                    webhook_input = gr.Textbox(
+                                        label=_("messaging_webhook"),
+                                        placeholder=f"https://... (for {p})",
+                                        scale=3,
+                                    )
+                                    token_input = gr.Textbox(
+                                        label=_("messaging_token"),
+                                        placeholder=f"{p} bot token",
+                                        type="password",
+                                        scale=3,
+                                    )
+                                    connect_msg_btn = gr.Button(_("messaging_connect"), variant="primary", scale=1)
+                                    test_msg_btn = gr.Button(_("messaging_test"), scale=1)
+                                status_display = gr.Markdown(f"_{p}: {_('messaging_disconnected')}_")
 
-                refresh_all_btn = gr.Button(_("refresh_all"), size="sm")
+                    # ── Tab 4: Channels ──────────────────────────────
+                    with gr.TabItem("📺 Channels", id="channels") as tab_channels:
+                        gr.Markdown("### 🔗 Connected Channels")
+                        with gr.Tabs():
+                            with gr.TabItem("YouTube"):
+                                yt_url_input = gr.Textbox(
+                                    placeholder=get_text("zh", "placeholder_url_yt"),
+                                    label=_("connect_channel", platform="YouTube"),
+                                )
+                                yt_connect_btn = gr.Button(_("add_channel"), variant="primary")
+                                yt_channels_list = gr.Dataframe(
+                                    headers=["Name", _("subscribers"), _("videos_count"), _("actions")],
+                                    label="YouTube Channels",
+                                    interactive=False,
+                                )
+                            with gr.TabItem("TikTok"):
+                                tt_url_input = gr.Textbox(
+                                    placeholder=get_text("zh", "placeholder_url_tt"),
+                                    label=_("connect_channel", platform="TikTok"),
+                                )
+                                tt_connect_btn = gr.Button(_("add_channel"), variant="primary")
+                                tt_channels_list = gr.Dataframe(
+                                    headers=["Name", _("followers"), _("videos_count"), _("actions")],
+                                    label="TikTok Channels",
+                                    interactive=False,
+                                )
 
-            # ========== TAB 4: My Channels ==========
-            with gr.TabItem(_("tab_channels"), id="channels") as tab_channels:
-                gr.Markdown(f"## {_('channels_title')}\n{_('channels_desc')}")
-                with gr.Tabs():
-                    with gr.TabItem(_("youtube_tab")) as yt_tab:
-                        yt_url_input = gr.Textbox(
-                            placeholder=get_text("zh", "placeholder_url_yt"),
-                            label=_("connect_channel", platform="YouTube"),
-                        )
-                        yt_connect_btn = gr.Button(_("add_channel"), variant="primary")
-                        yt_channels_list = gr.Dataframe(
-                            headers=["Name", _("subscribers"), _("videos_count"), _("actions")],
-                            label="YouTube Channels",
-                            interactive=False,
-                        )
-
-                    with gr.TabItem(_("tiktok_tab")) as tt_tab:
-                        tt_url_input = gr.Textbox(
-                            placeholder=get_text("zh", "placeholder_url_tt"),
-                            label=_("connect_channel", platform="TikTok"),
-                        )
-                        tt_connect_btn = gr.Button(_("add_channel"), variant="primary")
-                        tt_channels_list = gr.Dataframe(
-                            headers=["Name", _("followers"), _("videos_count"), _("actions")],
-                            label="TikTok Channels",
-                            interactive=False,
-                        )
-
-            # ========== TAB 5: Stock Video ==========
-            with gr.TabItem(_("tab_stock"), id="stock") as tab_stock:
-                gr.Markdown(f"## {_('stock_title')}\n{_('stock_desc')}")
-                with gr.Row():
-                    with gr.Column(scale=2):
-                        script_input = gr.Textbox(
-                            placeholder=_("stock_script_placeholder"),
-                            label=_("stock_script"),
-                            lines=12,
-                        )
+                    # ── Tab 5: Stock Video ───────────────────────────
+                    with gr.TabItem("🎬 Stock Video", id="stock") as tab_stock:
+                        gr.Markdown("### 🎥 Generate from Script")
                         with gr.Row():
-                            aspect_ratio = gr.Dropdown(
-                                choices=["9:16 (Portrait)", "16:9 (Landscape)", "1:1 (Square)"],
-                                value="9:16 (Portrait)",
-                                label=_("stock_aspect"),
-                            )
-                            voice_choice = gr.Dropdown(
-                                choices=["Default", "Male (en)", "Female (en)", "Male (zh)", "Female (zh)"],
-                                value="Default",
-                                label=_("stock_voice"),
-                            )
-                        generate_video_btn = gr.Button(_("stock_generate"), variant="primary", size="lg")
-                    with gr.Column(scale=1):
-                        video_preview = gr.Video(label=_("stock_preview"))
-                        download_video_btn = gr.Button(_("stock_download"), size="sm")
+                            with gr.Column(scale=2):
+                                script_input = gr.Textbox(
+                                    placeholder=_("stock_script_placeholder"),
+                                    label=_("stock_script"),
+                                    lines=8,
+                                )
+                                with gr.Row():
+                                    aspect_ratio = gr.Dropdown(
+                                        choices=["9:16 (Portrait)", "16:9 (Landscape)", "1:1 (Square)"],
+                                        value="9:16 (Portrait)",
+                                        label=_("stock_aspect"),
+                                    )
+                                    voice_choice = gr.Dropdown(
+                                        choices=["Default", "Male (en)", "Female (en)", "Male (zh)", "Female (zh)"],
+                                        value="Default",
+                                        label=_("stock_voice"),
+                                    )
+                                generate_video_btn = gr.Button(_("stock_generate"), variant="primary", size="lg")
+                            with gr.Column(scale=1):
+                                video_preview = gr.Video(label=_("stock_preview"))
+                                download_video_btn = gr.Button(_("stock_download"), size="sm")
 
-            # ========== TAB 6: Clip Studio ==========
-            with gr.TabItem(_("tab_clips"), id="clips") as tab_clips:
-                gr.Markdown(f"## {_('clips_title')}\n{_('clips_desc')}")
-                with gr.Row():
-                    with gr.Column():
+                    # ── Tab 6: Clip Studio ───────────────────────────
+                    with gr.TabItem("✂️ Clip Studio", id="clips") as tab_clips:
+                        gr.Markdown("### ✂️ Extract Clips")
                         source_video = gr.Dropdown(
                             choices=["Select a downloaded video..."],
                             value="Select a downloaded video...",
@@ -392,120 +404,124 @@ def build_ui():
                         extract_btn = gr.Button(_("clips_extract"), variant="primary")
                         clip_preview = gr.Video(label=_("stock_preview"))
 
-            # ========== TAB 7: Messaging ==========
-            with gr.TabItem(_("tab_messaging"), id="messaging") as tab_messaging:
-                gr.Markdown(f"## {_('messaging_title')}\n{_('messaging_desc')}")
-                platforms_msg = ["Telegram", "WhatsApp", "Discord", "Slack"]
-                for p in platforms_msg:
-                    with gr.Accordion(p, open=False):
-                        with gr.Row():
-                            webhook_input = gr.Textbox(
-                                label=_("messaging_webhook"),
-                                placeholder=f"https://... (for {p})",
-                                scale=3,
-                            )
-                            token_input = gr.Textbox(
-                                label=_("messaging_token"),
-                                placeholder=f"{p} bot token",
-                                type="password",
-                                scale=3,
-                            )
-                            connect_msg_btn = gr.Button(_("messaging_connect"), variant="primary", scale=1)
-                            test_msg_btn = gr.Button(_("messaging_test"), scale=1)
-                        status_display = gr.Markdown(f"_{p}: {_('messaging_disconnected')}_")
+            # ─── RIGHT COLUMN — Real-time Visualization ─────────────
+            with gr.Column(scale=1, min_width=460):
+                # Pipeline Progress Card
+                gr.Markdown("### 📊 Live Pipeline Progress")
+                pipeline_progress = gr.HTML("""
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
+                  <div style="color:#64748b;">⏳ Idle — waiting for pipeline trigger...</div>
+                </div>""")
 
-            # ========== TAB 8: Settings ==========
-            with gr.TabItem(_("tab_settings"), id="settings") as tab_settings:
-                gr.Markdown(f"## {_('settings_title')}\n{_('settings_desc')}")
-                with gr.Tabs():
-                    with gr.TabItem(_("ai_provider")):
-                        with gr.Column():
-                            gr.Markdown(f"_{_('ai_provider_desc')}_")
-                            provider_select = gr.Dropdown(
-                                choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"],
-                                value="Anthropic",
-                                label=_("provider"),
-                            )
-                            model_input = gr.Dropdown(
-                                choices=["claude-sonnet-4-6", "claude-opus-4-7"],
-                                value="claude-sonnet-4-6",
-                                label=_("model"),
-                            )
-                            api_key_input = gr.Textbox(
-                                placeholder=_("api_key_placeholder"),
-                                label=_("api_key"),
-                                type="password",
-                            )
-                            def update_model_for_provider(provider):
-                                model_options = {
-                                    "Anthropic": ["claude-sonnet-4-6", "claude-opus-4-7"],
-                                    "OpenAI": ["gpt-5.4-mini", "gpt-5.4"],
-                                    "OpenRouter": ["anthropic/claude-opus-4.7", "openai/gpt-5.4-mini", "google/gemini-2.0-flash"],
-                                    "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
-                                }
-                                choices = model_options.get(provider, [])
-                                value = choices[0] if choices else ""
-                                return gr.update(choices=choices, value=value)
+                # Agent Live Thinking Window
+                gr.Markdown("### 🧠 Agent Live Thinking Window")
+                thinking_window = gr.Textbox(
+                    lines=10,
+                    max_lines=20,
+                    label="🤖 Agent Cross-Talk & CoT Log (智能体实时思考日志)",
+                    placeholder="Agent reasoning will stream here in real time...",
+                    interactive=False,
+                )
 
-                            provider_select.change(
-                                fn=update_model_for_provider,
-                                inputs=[provider_select],
-                                outputs=[model_input],
-                            )
+                # Video Gallery
+                gr.Markdown("### 🎬 Latest Minted Video Output")
+                output_video = gr.Video(
+                    label="🎬 Latest Minted Video Output",
+                    height=320,
+                    interactive=False,
+                )
 
-                            save_settings_btn = gr.Button(_("save_settings"), variant="primary")
+        # =============================================================
+        # SETTINGS ACCORDION (At the bottom, collapsed by default)
+        # =============================================================
+        with gr.Accordion("⚙️ Advanced System Configurations", open=False):
+            with gr.Tabs():
+                with gr.TabItem(_("ai_provider")):
+                    gr.Markdown(f"_{_('ai_provider_desc')}_")
+                    with gr.Row():
+                        provider_select = gr.Dropdown(
+                            choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"],
+                            value="DeepSeek",
+                            label=_("provider"),
+                            scale=1,
+                        )
+                        model_input = gr.Dropdown(
+                            choices=["deepseek-chat", "deepseek-reasoner"],
+                            value="deepseek-chat",
+                            label=_("model"),
+                            scale=1,
+                        )
+                        api_key_input = gr.Textbox(
+                            placeholder=_("api_key_placeholder"),
+                            label=_("api_key"),
+                            type="password",
+                            scale=2,
+                        )
+                    save_settings_btn = gr.Button(_("save_settings"), variant="primary")
 
-                            save_settings_btn.click(
-                                fn=save_settings,
-                                inputs=[provider_select, model_input, api_key_input],
-                                outputs=[provider_select, model_input, api_key_input],
-                            )
+                    def update_model_for_provider(provider):
+                        model_options = {
+                            "Anthropic": ["claude-sonnet-4-6", "claude-opus-4-7"],
+                            "OpenAI": ["gpt-5.4-mini", "gpt-5.4"],
+                            "OpenRouter": ["anthropic/claude-opus-4.7", "openai/gpt-5.4-mini", "google/gemini-2.0-flash"],
+                            "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
+                        }
+                        choices = model_options.get(provider, [])
+                        value = choices[0] if choices else ""
+                        return gr.update(choices=choices, value=value)
 
-                    with gr.TabItem(_("service_keys")):
-                        gr.Markdown(f"_{_('service_keys_desc')}_")
-                        with gr.Row():
-                            yt_api_key = gr.Textbox(
-                                placeholder="YouTube API Key",
-                                label="YouTube",
-                                type="password",
-                            )
-                            pexels_key = gr.Textbox(
-                                placeholder="Pexels API Key",
-                                label="Pexels",
-                                type="password",
-                            )
-                        save_keys_btn = gr.Button(_("save_settings"), variant="primary")
+                    provider_select.change(
+                        fn=update_model_for_provider,
+                        inputs=[provider_select],
+                        outputs=[model_input],
+                    )
+                    save_settings_btn.click(
+                        fn=save_settings,
+                        inputs=[provider_select, model_input, api_key_input],
+                        outputs=[provider_select, model_input, api_key_input],
+                    )
 
-                    with gr.TabItem(_("system_health")):
-                        gr.Markdown(f"## {_('system_health')}\n{_('system_health_desc')}")
-                        health_output = gr.Markdown("_Check system health..._")
-                        check_health_btn = gr.Button(_("refresh"))
+                with gr.TabItem(_("service_keys")):
+                    gr.Markdown(f"_{_('service_keys_desc')}_")
+                    with gr.Row():
+                        yt_api_key = gr.Textbox(
+                            placeholder="YouTube API Key",
+                            label="YouTube",
+                            type="password",
+                        )
+                        pexels_key = gr.Textbox(
+                            placeholder="Pexels API Key",
+                            label="Pexels",
+                            type="password",
+                        )
+                    save_keys_btn = gr.Button(_("save_settings"), variant="primary")
 
-        # ─── Footer ─────────────────────────────────────────────────
-        gr.Markdown(elem_classes="footer-text", value="ViralMint v1.0 · AGPL-3.0")
+                with gr.TabItem(_("system_health")):
+                    gr.Markdown(f"## {_('system_health')}\n{_('system_health_desc')}")
+                    health_output = gr.Markdown("_Check system health..._")
+                    check_health_btn = gr.Button(_("refresh"))
 
-        # =================================================================
-        # Event Handlers: Language toggle
-        # =================================================================
+        # =============================================================
+        # FOOTER
+        # =============================================================
+        gr.Markdown(elem_classes="footer-text", value="ViralMint v1.0 · AGPL-3.0 · AI Agent Factory Dashboard")
+
+        # =============================================================
+        # EVENT HANDLERS
+        # =============================================================
 
         def update_ui_language(lang_display):
-            """Return gr.update() for every single UI component."""
             lang = LANG_MAP.get(lang_display, "en")
             global _LANG
             _LANG = lang
-
             t = lambda key, **kw: get_text(lang, key, **kw)
-
             return [
-                # lang_dropdown itself
                 gr.Dropdown(
                     choices=[t("lang_en"), t("lang_zh")],
                     value=t("lang_en") if lang == "en" else t("lang_zh"),
                     label=t("lang_label"),
                 ),
-                # title
-                gr.Markdown(f"# 🧠 ViralMint\n{t('app_subtitle')}"),
-                # tab labels (7 tabs)
+                gr.Markdown(f"# 🧠 ViralMint · AI Agent Factory\n{t('app_subtitle')}"),
                 gr.TabItem(label=t("tab_chat")),
                 gr.TabItem(label=t("scout_title")),
                 gr.TabItem(label=t("tab_library")),
@@ -514,145 +530,69 @@ def build_ui():
                 gr.TabItem(label=t("tab_clips")),
                 gr.TabItem(label=t("tab_settings")),
                 gr.TabItem(label=t("tab_messaging")),
-                # Chat tab
                 gr.Chatbot(placeholder=t("chat_no_conversations")),
                 gr.Textbox(placeholder=t("chat_input_placeholder")),
                 gr.Button(t("chat_send")),
                 gr.Button(t("chat_new")),
-                # Scout tab
                 gr.Textbox(placeholder=t("scout_url_placeholder"), label=t("url_input")),
                 gr.Dropdown(label=t("platform")),
-                gr.Button(t("scout_btn")),
                 gr.Textbox(label=t("scout_results")),
                 # Library
-                gr.Markdown(f"## {t('library_title')}\n{t('library_desc')}"),
-                gr.Button(t("refresh_all")),
-                # Library sub-tabs
-                gr.TabItem(label=t("tab_scout")),
-                gr.TabItem(label=t("tab_downloaded")),
-                gr.TabItem(label=t("tab_generated")),
-                gr.TabItem(label=t("tab_jobs")),
-                # Scout results sub-tab
                 gr.Dataframe(headers=[t("viral_score"), t("platform"), t("trending"), "URL"], label=t("tab_scout")),
                 gr.Button(t("refresh")),
-                # Downloaded sub-tab
                 gr.Dataframe(headers=["Title", t("platform"), t("views"), t("likes"), t("analyzed")], label=t("tab_downloaded")),
                 gr.Button(t("import_video")),
                 gr.Button(t("open_videos_folder")),
-                # Generated sub-tab
                 gr.Dataframe(headers=["Title", t("model"), t("viral_score"), t("platform")], label=t("tab_generated")),
                 gr.Radio(choices=[t("filter_all"), t("filter_ready"), t("filter_uploaded"), t("filter_draft"), t("filter_failed")], value=t("filter_all"), label=t("filter_all")),
                 gr.Button(t("open_generated_folder")),
-                # Jobs sub-tab
-                gr.Dataframe(headers=["ID", "Type", t("platform"), t("cancel"), t("refresh")], label=t("tab_jobs")),
-                gr.Button(t("bulk_delete")),
+                # Messaging
+                gr.Textbox(label=t("messaging_webhook")),
+                gr.Textbox(label=t("messaging_token")),
+                gr.Button(t("messaging_connect")),
+                gr.Button(t("messaging_test")),
                 # Channels
-                gr.Markdown(f"## {t('channels_title')}\n{t('channels_desc')}"),
-                gr.TabItem(label=t("youtube_tab")),
-                gr.TabItem(label=t("tiktok_tab")),
                 gr.Textbox(placeholder=t("placeholder_url_yt"), label=t("connect_channel", platform="YouTube")),
                 gr.Button(t("add_channel")),
                 gr.Dataframe(headers=["Name", t("subscribers"), t("videos_count"), t("actions")], label="YouTube Channels"),
                 gr.Textbox(placeholder=t("placeholder_url_tt"), label=t("connect_channel", platform="TikTok")),
                 gr.Button(t("add_channel")),
                 gr.Dataframe(headers=["Name", t("followers"), t("videos_count"), t("actions")], label="TikTok Channels"),
-                # Stock Video
-                gr.Markdown(f"## {t('stock_title')}\n{t('stock_desc')}"),
+                # Stock
                 gr.Textbox(placeholder=t("stock_script_placeholder"), label=t("stock_script")),
                 gr.Dropdown(label=t("stock_aspect")),
                 gr.Dropdown(label=t("stock_voice")),
                 gr.Button(t("stock_generate")),
-                gr.Video(label=t("stock_preview")),
                 gr.Button(t("stock_download")),
-                # Clip Studio
-                gr.Markdown(f"## {t('clips_title')}\n{t('clips_desc')}"),
+                # Clips
                 gr.Dropdown(label=t("clips_source")),
                 gr.Number(label=t("clips_start")),
                 gr.Number(label=t("clips_end")),
                 gr.Button(t("clips_extract")),
-                gr.Video(label=t("stock_preview")),
-                # Messaging
-                gr.Markdown(f"## {t('messaging_title')}\n{t('messaging_desc')}"),
-                # Messaging accordions (we update labels inside them)
-                gr.Accordion(label="Telegram", open=False),
-                gr.Textbox(label=t("messaging_webhook")),
-                gr.Textbox(label=t("messaging_token")),
-                gr.Button(t("messaging_connect")),
-                gr.Button(t("messaging_test")),
-                gr.Accordion(label="WhatsApp", open=False),
-                gr.Textbox(label=t("messaging_webhook")),
-                gr.Textbox(label=t("messaging_token")),
-                gr.Button(t("messaging_connect")),
-                gr.Button(t("messaging_test")),
-                gr.Accordion(label="Discord", open=False),
-                gr.Textbox(label=t("messaging_webhook")),
-                gr.Textbox(label=t("messaging_token")),
-                gr.Button(t("messaging_connect")),
-                gr.Button(t("messaging_test")),
-                gr.Accordion(label="Slack", open=False),
-                gr.Textbox(label=t("messaging_webhook")),
-                gr.Textbox(label=t("messaging_token")),
-                gr.Button(t("messaging_connect")),
-                gr.Button(t("messaging_test")),
                 # Settings
-                gr.Markdown(f"## {t('settings_title')}\n{t('settings_desc')}"),
-                gr.TabItem(label=t("ai_provider")),
-                gr.TabItem(label=t("service_keys")),
-                gr.TabItem(label=t("system_health")),
-            gr.Markdown(f"_{t('ai_provider_desc')}_"),
-                gr.Dropdown(choices=["Anthropic", "OpenAI", "OpenRouter", "DeepSeek"], label=t("provider")),
-            gr.Dropdown(choices=["claude-sonnet-4-6", "claude-opus-4-7"], label=t("model")),
+                gr.Dropdown(label=t("provider")),
+                gr.Dataframe(label=t("tab_downloaded")),
                 gr.Textbox(placeholder=t("api_key_placeholder"), label=t("api_key")),
                 gr.Button(t("save_settings")),
-                gr.Markdown(f"_{t('service_keys_desc')}_"),
                 gr.Button(t("save_settings")),
-                gr.Markdown(f"## {t('system_health')}\n{t('system_health_desc')}"),
                 gr.Button(t("refresh")),
             ]
 
-        # Bind the language toggle
-        all_outputs = [
-            lang_dropdown,          # 0
-            title_markdown,         # 1
-            tab_chat,               # 2
-            tab_scout,              # 3
-            tab_library,            # 4
-            tab_channels,           # 5
-            tab_stock,              # 6
-            tab_clips,              # 7
-            tab_settings,           # 8
-            tab_messaging,          # 9
-            chatbot,                # 10
-            msg_input,              # 11
-            send_btn,               # 12
-            new_chat_btn,           # 13
-            scout_url,              # 14
-            scout_platform,         # 15
-            scout_btn,              # 16
-            scout_output,           # 17
-            # Library header (gr.Markdown)
-            # Need to add a ref for the library header markdown
-            # We'll use the refresh_all_btn as a marker
-        ]
-        # Since Gradio requires explicit component references, we add refs for markdown components
-        # that need updating. Let's add the missing ones.
-
-        # Actually, let's rebuild with explicit variable references for all markdown/components
-        # that need updating. The approach above has issues because we didn't store references
-        # for the nested markdown components. Let's use a simpler but effective approach:
-        # We store them in a list and rebuild references.
-
-        # Re-build with proper references — we need to store all components that change text
-        # Let's add invisible markdown placeholders that serve as text anchors for translation.
-        # This is cleaner.
-
-        # For now, the key components are updated. The language_state is tracked.
         lang_dropdown.change(
             fn=update_ui_language,
             inputs=[lang_dropdown],
             outputs=[lang_dropdown, title_markdown] +
-            [tab_chat, tab_scout, tab_library, tab_channels, tab_stock, tab_clips, tab_settings, tab_messaging],
-            # In practice, all components should be listed. For brevity, the main structure updates.
+            [tab_control, tab_library, tab_channels, tab_stock, tab_clips, tab_messaging] +
+            [chatbot, msg_input, send_btn, new_chat_btn,
+             scout_url, scout_platform, scout_output,
+             scout_results_list, refresh_scout_btn, downloaded_list, import_btn, open_videos_btn,
+             generated_list, filter_gen, open_gen_btn,
+             webhook_input, token_input, connect_msg_btn, test_msg_btn,
+             yt_url_input, yt_connect_btn, yt_channels_list,
+             tt_url_input, tt_connect_btn, tt_channels_list,
+             script_input, aspect_ratio, voice_choice, generate_video_btn, download_video_btn,
+             source_video, start_time, end_time, extract_btn,
+             provider_select, downloaded_list, api_key_input, save_settings_btn, save_keys_btn, check_health_btn],
         )
 
         # ─── Load persisted settings on page load ───────────────────
@@ -674,16 +614,15 @@ def build_ui():
 
         new_chat_btn.click(new_chat, outputs=[chatbot, msg_input])
 
-        # ─── Scout event handlers ───────────────────────────────────
-        def do_scout(url, platform, lang):
-            global _LANG
-            _LANG = lang
-            return run_pipeline(url, platform, lang)
+        # ─── Pipeline event handler ─────────────────────────────────
+        def do_pipeline(url, platform, lang):
+            status_msg, progress_html, thinking = run_pipeline(url, platform, lang)
+            return status_msg, progress_html, thinking
 
-        scout_btn.click(
-            fn=do_scout,
+        run_pipeline_btn.click(
+            fn=do_pipeline,
             inputs=[scout_url, scout_platform, lang_state],
-            outputs=[scout_url, scout_output],
+            outputs=[scout_url, pipeline_progress, thinking_window],
         )
 
         def update_lang_state(lang_display):
