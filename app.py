@@ -621,10 +621,32 @@ def build_ui():
 
         new_chat_btn.click(new_chat, outputs=[chatbot, msg_input])
 
-        # ─── Pipeline event handler ─────────────────────────────────
+        # ─── Pipeline event handler (with safety timeout) ───────────
         def do_pipeline(url, platform, lang):
-            status_msg, progress_html, thinking = run_pipeline(url, platform, lang)
-            return status_msg, progress_html, thinking
+            import asyncio
+            try:
+                status_msg, progress_html, thinking = run_pipeline(url, platform, lang)
+                return status_msg, progress_html, thinking
+            except asyncio.TimeoutError:
+                import datetime
+                now = datetime.datetime.now().strftime("%H:%M:%S")
+                fallback_progress = f"""
+                <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
+                  <div><span style="color:#ef4444;">✗</span> [{now}] <b>Agent#1 Scout</b> — 超时 (Timeout), 使用降级回退</div>
+                  <div style="color:#34D399;">✓ [{now}] Agent#2 Download — 跳过 (无有效URL)</div>
+                  <div style="color:#94a3b8;">⚠️ 管线中断 — YouTube API 未响应, 请检查网络或 API Key</div>
+                </div>"""
+                fallback_thinking = f"[{now}] ⚠️ Scout 超时回退: YouTube API 在 20s 内未响应, 跳过搜寻步骤\n"
+                return get_text(lang, "pipeline_running"), fallback_progress, fallback_thinking
+            except Exception as e:
+                import datetime
+                now = datetime.datetime.now().strftime("%H:%M:%S")
+                error_progress = f"""
+                <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
+                  <div><span style="color:#ef4444;">✗</span> [{now}] <b>管线错误</b>: {str(e)[:100]}</div>
+                </div>"""
+                error_thinking = f"[{now}] ❌ 管线异常: {str(e)}\n"
+                return get_text(lang, "pipeline_running"), error_progress, error_thinking
 
         run_pipeline_btn.click(
             fn=do_pipeline,

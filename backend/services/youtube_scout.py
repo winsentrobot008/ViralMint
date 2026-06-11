@@ -78,7 +78,14 @@ async def search_youtube(
 
         return results
 
-    return await asyncio.to_thread(_search)
+    # Wrap in asyncio.wait_for so a network hang never blocks the pipeline forever
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_search), timeout=20.0)
+    except asyncio.TimeoutError:
+        logger.warning(f"YouTube search timed out for niche='{niche}' — returning empty")
+        return []
+    except Exception:
+        raise
 
 
 def _detect_language(text: str) -> str:
