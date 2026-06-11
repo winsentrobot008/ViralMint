@@ -145,10 +145,12 @@ def load_settings():
 # =====================================================================
 
 def chat_with_agent(message, history):
+    """Send a message to the AI planner agent. History must be a list of dicts with 'role' and 'content' keys."""
     if not message.strip():
         return history, gr.update(value="")
     history = history or []
-    history.append((message, None))
+    # Append user message as dict
+    history.append({"role": "user", "content": message})
     if PLANNER_AVAILABLE:
         import asyncio
         try:
@@ -159,11 +161,11 @@ def chat_with_agent(message, history):
                 planner.handle_message_text(message=message, user_settings=None, user_id="gradio_user")
             )
             loop.close()
-            history[-1] = (message, response)
+            history.append({"role": "assistant", "content": response})
         except Exception as e:
-            history[-1] = (message, f"[Error] {e}")
+            history.append({"role": "assistant", "content": f"[Error] {e}"})
     else:
-        history[-1] = (message, "Planner agent not available. Install the full backend.")
+        history.append({"role": "assistant", "content": "Planner agent not available. Install the full backend."})
     return history, gr.update(value="")
 
 def run_pipeline(url, platform, lang):
@@ -617,7 +619,7 @@ def build_ui():
         send_btn.click(respond, [msg_input, chatbot], [chatbot, msg_input])
 
         def new_chat():
-            return None, gr.update(value=_("chat_input_placeholder"))
+            return [], gr.update(value=_("chat_input_placeholder"))
 
         new_chat_btn.click(new_chat, outputs=[chatbot, msg_input])
 
