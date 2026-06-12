@@ -38,3 +38,15 @@
 - Write integration tests for encryption persistence, chatbot structure, and pipeline safety.
 - Establish CI pipeline with `unittest` discovery.
 - Deploy to GitHub and Hugging Face Spaces.
+
+---
+
+## 2026-06-12 — Legacy Config Model Fallback Fix
+
+### Bug Description
+- **User Error**: `Value: claude-sonnet-4-6 is not in the list of choices: ['deepseek-chat', 'deepseek-reasoner']`
+- **Root Cause**: Legacy `config.json` files contain historical model identifiers (e.g., `claude-sonnet-4-6` from a previous Anthropic provider selection). When `load_settings()` populates the Gradio UI dropdown, Gradio 6.0 strictly validates that the value exists in the current choices matrix. If the provider has been changed (or the model choices were updated), the old model string is rejected.
+- **Fix**: Added a strict containment check in `load_settings()`. If the saved model is not in the valid choices list for the saved provider, a safe fallback (`'deepseek-chat'` for DeepSeek, or the first available choice) is applied. Same sanitization applied to the provider field.
+
+### Breaking-Change Impact Analysis
+- **None**: The fallback is fully backward-compatible. Existing configs with valid model/provider pairs continue to work unchanged. Only invalid/legacy values are sanitized on read.

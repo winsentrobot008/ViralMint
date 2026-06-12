@@ -313,5 +313,135 @@ class TestPipelineExceptionSafety(unittest.TestCase):
             self.fail(f"Pipeline crashed on invalid URL: {e}")
 
 
+class TestLegacyConfigFallback(unittest.TestCase):
+    """Verify legacy config model identifiers are sanitized on load."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_path = Path(self.temp_dir) / "config.json"
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _patch_config_file(self):
+        return patch("app.CONFIG_FILE", self.config_path)
+
+    def _extract_value(self, obj):
+        if not isinstance(obj, (dict, list, tuple)):
+            return obj
+        if isinstance(obj, dict) and obj.get('__type__') == 'update':
+            return obj.get('value', '')
+        if isinstance(obj, dict) and 'value' in obj:
+            inner = obj['value']
+            if isinstance(inner, dict) and isinstance(inner.get('value'), str):
+                return inner['value']
+            return inner
+        return str(obj)
+
+    def test_legacy_config_model_fallback(self):
+        """Legacy model 'claude-sonnet-4-6' must fall back to 'deepseek-chat' without raising."""
+        from app import load_settings
+
+        # Create a legacy config with an invalid model for the current provider
+        legacy_cfg = {
+            "ai_provider": "DeepSeek",
+            "ai_model": "claude-sonnet-4-6",  # Not in DeepSeek choices
+        }
+        self.config_path.write_text(
+            json.dumps(legacy_cfg, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        with self._patch_config_file():
+            # Should NOT raise Gradio validation error
+            try:
+                model_update, _, _ = load_settings()
+            except Exception as e:
+                self.fail(f"load_settings() raised an exception on legacy config: {e}")
+
+            # Extract the model value from the gr.update return
+            model_value = self._extract_value(model_update)
+            self.assertEqual(
+                model_value, "deepseek-chat",
+                f"Legacy model 'claude-sonnet-4-6' must fall back to 'deepseek-chat', got '{model_value}'"
+            )
+
+    def test_legacy_config_invalid_provider_fallback(self):
+        """Invalid provider must fall back to 'DeepSeek'."""
+        from app import load_settings
+
+        legacy_cfg = {
+            "ai_provider": "NonExistentProvider",
+            "ai_model": "some-model",
+        }
+        self.config_path.write_text(
+            json.dumps(legacy_cfg, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        with self._patch_config_file():
+            try:
+                model_update, _, _ = load_settings()
+            except Exception as e:
+                self.fail(f"load_settings() raised an exception on invalid provider: {e}")
+
+            model_value = self._extract_value(model_update)
+            # Invalid provider falls back to DeepSeek, model falls back to deepseek-chat
+            self.assertEqual(
+                model_value, "deepseek-chat",
+                f"Invalid provider must fall back to 'deepseek-chat', got '{model_value}'"
+            )
+
+    def test_legacy_config_valid_model_no_fallback(self):
+        """Valid model in config must NOT be overwritten by fallback."""
+        from app import load_settings
+
+        valid_cfg = {
+            "ai_provider": "DeepSeek",
+            "ai_model": "deepseek-reasoner",
+        }
+        self.config_path.write_text(
+            json.dumps(valid_cfg, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        with self._patch_config_file():
+            try:
+                model_update, _, _ = load_settings()
+            except Exception as e:
+                self.fail(f"load_settings() raised an exception on valid config: {e}")
+
+            model_value = self._extract_value(model_update)
+            self.assertEqual(
+                model_value, "deepseek-reasoner",
+                f"Valid model must be preserved, got '{model_value}'"
+            )
+
+    def test_legacy_config_anthropic_model_preserved(self):
+        """Valid Anthropic model must be preserved when provider is Anthropic."""
+        from app import load_settings
+
+        valid_cfg = {
+            "ai_provider": "Anthropic",
+            "ai_model": "claude-sonnet-4-6",
+        }
+        self.config_path.write_text(
+            json.dumps(valid_cfg, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        with self._patch_config_file():
+            try:
+                model_update, _, _ = load_settings()
+            except Exception as e:
+                self.fail(f"load_settings() raised an exception on valid Anthropic config: {e}")
+
+            model_value = self._extract_value(model_update)
+            self.assertEqual(
+                model_value, "claude-sonnet-4-6",
+                f"Valid Anthropic model must be preserved, got '{model_value}'"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

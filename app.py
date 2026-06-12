@@ -128,16 +128,23 @@ def save_settings(provider: str, model: str, api_key: str):
 
 def load_settings():
     cfg = _load_config()
-    provider = cfg.get("ai_provider", "Anthropic")
-    model = cfg.get("ai_model", "claude-sonnet-4-6")
-    masked = API_KEY_MASK if cfg.get("ai_api_key_encrypted") else ""
     model_options = {
         "Anthropic": ["claude-sonnet-4-6", "claude-opus-4-7"],
         "OpenAI": ["gpt-5.4-mini", "gpt-5.4"],
         "OpenRouter": ["anthropic/claude-opus-4.7", "openai/gpt-5.4-mini", "google/gemini-2.0-flash"],
         "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
     }
-    choices = model_options.get(provider, ["claude-sonnet-4-6", "claude-opus-4-7"])
+    valid_providers = list(model_options.keys())
+    # Graceful fallback: sanitize provider to current platform boundaries
+    provider = cfg.get("ai_provider", "DeepSeek")
+    if provider not in valid_providers:
+        provider = "DeepSeek"
+    choices = model_options[provider]
+    # Graceful fallback: sanitize model to current platform boundaries
+    model = cfg.get("ai_model", "deepseek-chat")
+    if model not in choices:
+        model = "deepseek-chat"
+    masked = API_KEY_MASK if cfg.get("ai_api_key_encrypted") else ""
     return [gr.update(choices=choices, value=model), gr.update(value=model), gr.update(value=masked)]
 
 # =====================================================================
