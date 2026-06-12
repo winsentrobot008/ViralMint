@@ -234,27 +234,75 @@ def simulate_pipeline_steps(url, progress_box, thinking_box):
         time.sleep(1.5)
         yield progress_box, f"[{time.strftime('%H:%M:%S')}] 🧠 {agent} (DeepSeek) — {msg}\n" + (thinking_box if i == 0 else "")
 
-def _call_deepseek_blocking(system_prompt: str, user_prompt: str, timeout: float = 15.0) -> str:
-    """Synchronous blocking call to DeepSeek (or any OpenAI-compatible endpoint).
-    Runs in a thread pool via asyncio.to_thread — never blocks the event loop."""
+def _call_deepseek_stream(system_prompt: str, user_prompt: str, queue: "asyncio.Queue", timeout: float = 25.0) -> None:
+    """Synchronous streaming call to DeepSeek. Each token is put into an asyncio.Queue
+    as it arrives. Runs in a thread pool via asyncio.to_thread — never blocks the event loop.
+    Raises RuntimeError if API key is missing. Puts None into the queue when done."""
     import os
     import openai
     api_key = os.environ.get("OPENAI_API_KEY", "")
     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.deepseek.com")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set — cannot run AI inference")
-    client = openai.OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.7,
-        max_tokens=2000,
-        timeout=timeout,
+        queue.put_nowait("⚠️ ERROR: OPENAI_API_KEY not set — cannot run AI inference\n")
+        queue.put_nowait(None)
+        return
+    try:
+        client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        stream = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.7,
+            max_tokens=2000,
+            timeout=min(timeout, 25.0),
+            stream=True,
+        )
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                token = chunk.choices[0].delta.content
+                queue.put_nowait(token)
+        queue.put_nowait(None)
+    except openai.APIError as e:
+        queue.put_nowait(f"\n⚠️ OpenAI API Error: {e.status_code} {e.message}\n")
+        queue.put_nowait(None)
+    except openai.APITimeoutError:
+        queue.put_nowait("\n⚠️ DeepSeek 请求超时 — 请检查网络连接\n")
+        queue.put_nowait(None)
+    except openai.APIConnectionError as e:
+        queue.put_nowait(f"\n⚠️ DeepSeek 连接失败: {e}\n")
+        queue.put_nowait(None)
+    except Exception as e:
+        queue.put_nowait(f"\n⚠️ 未知错误: {str(e)[:200]}\n")
+        queue.put_nowait(None)
+
+async def _deepseek_stream_async(system_prompt: str, user_prompt: str, timeout: float = 25.0):
+    """Async generator that yields DeepSeek tokens one by one as they arrive.
+    Uses an asyncio.Queue to bridge the sync streaming thread with the async world."""
+    import asyncio
+    queue: asyncio.Queue = asyncio.Queue()
+    # Start the blocking streaming call in a thread
+    thread_task = asyncio.create_task(
+        asyncio.wait_for(
+            asyncio.to_thread(_call_deepseek_stream, system_prompt, user_prompt, queue, timeout),
+            timeout=timeout + 5.0,  # slightly longer than the inner timeout
+        )
     )
-    return response.choices[0].message.content.strip()
+    accumulated = ""
+    while True:
+        try:
+            token = await asyncio.wait_for(queue.get(), timeout=timeout + 5.0)
+        except asyncio.TimeoutError:
+            yield accumulated + "\n⚠️ 流式生成超时 — 连接中断\n"
+            return
+        if token is None:
+            break
+        accumulated += token
+        yield token
+    # Wait for the thread to finish (in case of remaining cleanup)
+    if not thread_task.done():
+        thread_task.cancel()
 
 
 async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
@@ -325,39 +373,41 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
     thinking3_running = f"[{now3_start}] 🧠 Agent#3 Analyzer — 正在调用 DeepSeek 分析视频结构...\n"
     yield get_text(lang, "pipeline_running"), progress3_running, thinking3_running
 
+    # Stream DeepSeek analysis token-by-token into the thinking window
     analysis_result = ""
-    try:
-        system_prompt_analyzer = (
-            "You are a viral video analyst. Given a video URL and platform, "
-            "analyze the potential viral hooks, target audience, content structure, "
-            "and engagement predictions. Be concise and specific. "
-            "Output in Chinese with markdown formatting."
-        )
-        user_prompt_analyzer = (
-            f"Analyze this video for viral potential:\n"
-            f"- URL: {url}\n"
-            f"- Platform: {platform}\n\n"
-            f"Provide:\n"
-            f"1. Viral Hook Analysis (what makes this engaging)\n"
-            f"2. Target Audience\n"
-            f"3. Content Gaps & Opportunities\n"
-            f"4. Predicted Engagement Metrics\n"
-            f"5. Recommendations for short-video adaptation"
-        )
-        analysis_result = await asyncio.wait_for(
-            asyncio.to_thread(_call_deepseek_blocking, system_prompt_analyzer, user_prompt_analyzer),
-            timeout=20.0,
-        )
-        print(f"[Debug] Agent#3 Analyzer completed: {len(analysis_result)} chars")
-    except RuntimeError as e:
-        analysis_result = f"⚠️ {e}"
-        print(f"[Debug] Agent#3 Analyzer skipped: {e}")
-    except asyncio.TimeoutError:
-        analysis_result = "⚠️ DeepSeek 分析超时 — 跳过 AI 分析步骤"
-        print("[Debug] Agent#3 Analyzer timed out")
-    except Exception as e:
-        analysis_result = f"⚠️ 分析时出错: {str(e)[:200]}"
-        print(f"[Debug] Agent#3 Analyzer error: {e}")
+    system_prompt_analyzer = (
+        "You are a viral video analyst. Given a video URL and platform, "
+        "analyze the potential viral hooks, target audience, content structure, "
+        "and engagement predictions. Be concise and specific. "
+        "Output in Chinese with markdown formatting."
+    )
+    user_prompt_analyzer = (
+        f"Analyze this video for viral potential:\n"
+        f"- URL: {url}\n"
+        f"- Platform: {platform}\n\n"
+        f"Provide:\n"
+        f"1. Viral Hook Analysis (what makes this engaging)\n"
+        f"2. Target Audience\n"
+        f"3. Content Gaps & Opportunities\n"
+        f"4. Predicted Engagement Metrics\n"
+        f"5. Recommendations for short-video adaptation"
+    )
+    async for token in _deepseek_stream_async(system_prompt_analyzer, user_prompt_analyzer, timeout=20.0):
+        analysis_result += token
+        now3_stream = datetime.datetime.now().strftime("%H:%M:%S")
+        progress3_stream = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#34D399;">✓</span> [{now3_stream}] <b>Agent#1 Scout</b> — 完成</div>
+  <div><span style="color:#34D399;">✓</span> [{now3_stream}] <b>Agent#2 Download</b> — 完成</div>
+  <div><span style="color:#34D399;">✓</span> [{now3_stream}] <b>Agent#3 Analyzer</b> — DeepSeek 正在流式分析...</div>
+  <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
+</div>"""
+        thinking3_stream = f"[{now3_stream}] 🧠 Agent#3 Analyzer — 实时分析输出:\n{analysis_result}\n"
+        yield get_text(lang, "pipeline_running"), progress3_stream, thinking3_stream
+
+    if not analysis_result.strip():
+        analysis_result = "⚠️ DeepSeek 未返回有效分析结果"
 
     now3 = datetime.datetime.now().strftime("%H:%M:%S")
     progress3 = f"""
@@ -384,40 +434,50 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
     thinking4_running = f"[{now4_start}] 🧠 Agent#4 Generator — 正在调用 DeepSeek 生成短视频脚本...\n"
     yield get_text(lang, "pipeline_running"), progress4_running, thinking4_running
 
+    # Stream DeepSeek script generation token-by-token
     script_result = ""
-    try:
-        system_prompt_generator = (
-            "You are a professional short-video script writer. "
-            "Given a video analysis, generate a complete short-video script outline "
-            "including: visual cues, audio/voiceover script, text overlays, and call-to-action. "
-            "The video should be 30-60 seconds long, optimized for TikTok/YouTube Shorts. "
-            "Output in Chinese with markdown formatting."
-        )
-        user_prompt_generator = (
-            f"Based on this video analysis, create a short-video script:\n\n"
-            f"--- Analysis ---\n{analysis_result}\n\n"
-            f"Generate:\n"
-            f"1. Hook (first 3 seconds)\n"
-            f"2. Visual Storyboard (scene-by-scene)\n"
-            f"3. Voiceover Script\n"
-            f"4. Text Overlays / Captions\n"
-            f"5. Call-to-Action\n"
-            f"6. Music/Sound Suggestions"
-        )
-        script_result = await asyncio.wait_for(
-            asyncio.to_thread(_call_deepseek_blocking, system_prompt_generator, user_prompt_generator),
-            timeout=25.0,
-        )
-        print(f"[Debug] Agent#4 Generator completed: {len(script_result)} chars")
-    except RuntimeError as e:
-        script_result = f"⚠️ {e}"
-        print(f"[Debug] Agent#4 Generator skipped: {e}")
-    except asyncio.TimeoutError:
-        script_result = "⚠️ DeepSeek 生成超时 — 跳过脚本生成步骤"
-        print("[Debug] Agent#4 Generator timed out")
-    except Exception as e:
-        script_result = f"⚠️ 生成时出错: {str(e)[:200]}"
-        print(f"[Debug] Agent#4 Generator error: {e}")
+    system_prompt_generator = (
+        "You are a professional short-video script writer. "
+        "Given a video analysis, generate a complete short-video script outline "
+        "including: visual cues, audio/voiceover script, text overlays, and call-to-action. "
+        "The video should be 30-60 seconds long, optimized for TikTok/YouTube Shorts. "
+        "Output in Chinese with markdown formatting."
+    )
+    user_prompt_generator = (
+        f"Based on this video analysis, create a short-video script:\n\n"
+        f"--- Analysis ---\n{analysis_result}\n\n"
+        f"Generate:\n"
+        f"1. Hook (first 3 seconds)\n"
+        f"2. Visual Storyboard (scene-by-scene)\n"
+        f"3. Voiceover Script\n"
+        f"4. Text Overlays / Captions\n"
+        f"5. Call-to-Action\n"
+        f"6. Music/Sound Suggestions"
+    )
+    async for token in _deepseek_stream_async(system_prompt_generator, user_prompt_generator, timeout=25.0):
+        script_result += token
+        now4_stream = datetime.datetime.now().strftime("%H:%M:%S")
+        progress4_stream = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#34D399;">✓</span> [{now4_stream}] <b>Agent#1 Scout</b> — 完成</div>
+  <div><span style="color:#34D399;">✓</span> [{now4_stream}] <b>Agent#2 Download</b> — 完成</div>
+  <div><span style="color:#34D399;">✓</span> [{now4_stream}] <b>Agent#3 Analyzer</b> — 完成</div>
+  <div><span style="color:#34D399;">✓</span> [{now4_stream}] <b>Agent#4 Generator</b> — DeepSeek 正在流式生成脚本...</div>
+  <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
+</div>"""
+        thinking4_stream = f"[{now4_stream}] 🧠 Agent#4 Generator — 实时脚本输出:\n{script_result}\n"
+        yield get_text(lang, "pipeline_running"), progress4_stream, thinking4_stream
+
+    if not script_result.strip():
+        script_result = "⚠️ DeepSeek 未返回有效脚本内容"
+
+    # Write script to a preview file for the video component
+    import uuid
+    preview_dir = Path("storage") / "previews"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = preview_dir / f"script_{uuid.uuid4().hex[:8]}.txt"
+    preview_path.write_text(script_result, encoding="utf-8")
+    print(f"[Debug] Preview script saved to {preview_path}")
 
     now4 = datetime.datetime.now().strftime("%H:%M:%S")
     progress4 = f"""

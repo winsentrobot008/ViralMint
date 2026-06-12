@@ -241,13 +241,19 @@ class TestPipelineExceptionSafety(unittest.TestCase):
     def setUp(self):
         self.planner_patcher = patch("app.PLANNER_AVAILABLE", False)
         self.planner_patcher.start()
-        # Mock DeepSeek AI calls so tests stay fast and isolated
-        self.mock_deepseek = patch("app._call_deepseek_blocking", return_value="模拟分析结果: 视频具有高互动潜力")
+        # Mock DeepSeek streaming AI calls so tests stay fast and isolated
+        # _call_deepseek_stream is the sync thread function; we mock it to put a fixed token + None
+        self.mock_deepseek = patch("app._call_deepseek_stream", side_effect=self._mock_deepseek_stream)
         self.mock_deepseek.start()
 
     def tearDown(self):
         self.planner_patcher.stop()
         self.mock_deepseek.stop()
+
+    def _mock_deepseek_stream(self, system_prompt, user_prompt, queue, timeout=25.0):
+        """Mock the streaming function: put a test token and then None."""
+        queue.put_nowait("模拟分析结果: 视频具有高互动潜力")
+        queue.put_nowait(None)
 
     def _collect(self, async_gen):
         """Helper: iterate an async generator and return the last yielded tuple."""

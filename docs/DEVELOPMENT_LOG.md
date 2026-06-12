@@ -112,3 +112,21 @@ Replaced static mock strings `（模拟）` in Agent#3 (Analyzer) and Agent#4 (G
 
 ### Breaking-Change Impact Analysis
 - **None**: The pipeline signature `(status, progress_html, thinking)` is preserved. Each agent step now takes actual processing time (2-10s per AI call) instead of instant mock. The async generator yields intermediate progress as before.
+
+---
+
+## 2026-06-12 — Streaming AI Inference & Visual Asset Mounting Fix
+
+### Bug Description
+- **Symptom**: Pipeline completes instantly at same second (`16:49:33`). Log window blank except static "Pipeline 全部完成" message. Zero visible copy, scripts, or preview assets.
+- **Root Cause**: `_call_deepseek_blocking()` collected the entire DeepSeek response as a single string via `response.choices[0].message.content` (non-streaming mode) then returned it all at once. The async generator only yielded one final block — no chunk-by-chunk streaming, no visible real-time output.
+- **Secondary cause**: No video preview asset was mounted after Agent#4. The UI's `最新生成的视频` component was never bound to a generated file.
+
+### Fix Summary
+1. Replaced `_call_deepseek_blocking()` with `_call_deepseek_stream()` that uses `stream=True` and yields tokens individually through an `asyncio.Queue`.
+2. Agent#3 and Agent#4 now yield each DeepSeek token as it arrives — the user sees Chinese Markdown crawling across the screen in real-time.
+3. After Agent#4 completes, a timestamped `preview_output.txt` is written to `storage/` and its path is yielded so Gradio can bind it to the video preview component.
+4. Error traces (401, timeout, connection refused) are now yielded directly to the log window.
+
+### Breaking-Change Impact Analysis
+- **None**: The pipeline yield signature is preserved. All existing tests continue to pass (mock `_call_deepseek_blocking` is simply replaced with mock `_call_deepseek_stream`).
