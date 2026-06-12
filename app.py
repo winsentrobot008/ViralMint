@@ -306,10 +306,20 @@ async def _deepseek_stream_async(system_prompt: str, user_prompt: str, timeout: 
 
 
 async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
-    """Async generator that runs real AI agents (DeepSeek) for each pipeline step."""
+    """Async generator that runs real AI agents (DeepSeek) for each pipeline step.
+    
+    Yields 5-element tuples: (status, progress_html, cumulative_log, analysis_report, script_report)
+    The cumulative_log is APPEND-ONLY across all agents so no content is ever overwritten.
+    analysis_report and script_report are dedicated output panels that remain frozen after completion.
+    """
     import datetime
     print(f"[Debug] Entering Pipeline for url={url} platform={platform}")
     now = datetime.datetime.now().strftime("%H:%M:%S")
+
+    # ── INIT: cumulative log accumulator (append-only ─ never overwritten) ──
+    cumulative_log = ""
+    analysis_report = ""
+    script_report = ""
 
     # ── Agent#1: Scout (YouTube search) ──────────────────────────────
     progress = f"""
@@ -320,8 +330,8 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    thinking = f"[{now}] 🧠 Agent#1 Scout (DeepSeek) — 开始分析: {url}\n  平台: {platform}\n"
-    yield get_text(lang, "pipeline_running"), progress, thinking
+    cumulative_log += f"[{now}] 🧠 Agent#1 Scout (DeepSeek) — 开始分析: {url}\n  平台: {platform}\n"
+    yield get_text(lang, "pipeline_running"), progress, cumulative_log, analysis_report, script_report
 
     print("[Debug] Agent#1 — Running YouTube search...")
     # Extract video ID from URL (simple heuristic)
@@ -344,8 +354,8 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    thinking1 = f"[{now1}] ✅ Agent#1 完成 — 已获取视频元数据\n"
-    yield get_text(lang, "pipeline_running"), progress1, thinking1
+    cumulative_log += f"[{now1}] ✅ Agent#1 完成 — 已获取视频元数据\n"
+    yield get_text(lang, "pipeline_running"), progress1, cumulative_log, analysis_report, script_report
 
     # ── Agent#2: Download (simulated placeholder) ────────────────────
     now2 = datetime.datetime.now().strftime("%H:%M:%S")
@@ -357,8 +367,8 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    thinking2 = f"[{now2}] ✅ Agent#2 完成 — 视频已下载到本地存储\n"
-    yield get_text(lang, "pipeline_running"), progress2, thinking2
+    cumulative_log += f"[{now2}] ✅ Agent#2 完成 — 视频已下载到本地存储\n"
+    yield get_text(lang, "pipeline_running"), progress2, cumulative_log, analysis_report, script_report
 
     # ── Agent#3: Analyzer (Real DeepSeek AI inference) ───────────────
     now3_start = datetime.datetime.now().strftime("%H:%M:%S")
@@ -370,10 +380,11 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    thinking3_running = f"[{now3_start}] 🧠 Agent#3 Analyzer — 正在调用 DeepSeek 分析视频结构...\n"
-    yield get_text(lang, "pipeline_running"), progress3_running, thinking3_running
+    cumulative_log += f"[{now3_start}] 🧠 Agent#3 Analyzer — 正在调用 DeepSeek 分析视频结构...\n"
+    yield get_text(lang, "pipeline_running"), progress3_running, cumulative_log, analysis_report, script_report
 
     # Stream DeepSeek analysis token-by-token into the thinking window
+    # AND simultaneously accumulate into analysis_report for the permanent display panel.
     analysis_result = ""
     system_prompt_analyzer = (
         "You are a viral video analyst. Given a video URL and platform, "
@@ -394,6 +405,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
     )
     async for token in _deepseek_stream_async(system_prompt_analyzer, user_prompt_analyzer, timeout=20.0):
         analysis_result += token
+        analysis_report = analysis_result  # mirror into permanent analysis panel
         now3_stream = datetime.datetime.now().strftime("%H:%M:%S")
         progress3_stream = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
@@ -403,11 +415,12 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-        thinking3_stream = f"[{now3_stream}] 🧠 Agent#3 Analyzer — 实时分析输出:\n{analysis_result}\n"
-        yield get_text(lang, "pipeline_running"), progress3_stream, thinking3_stream
+        cumulative_log += token
+        yield get_text(lang, "pipeline_running"), progress3_stream, cumulative_log, analysis_report, script_report
 
     if not analysis_result.strip():
         analysis_result = "⚠️ DeepSeek 未返回有效分析结果"
+        analysis_report = analysis_result
 
     now3 = datetime.datetime.now().strftime("%H:%M:%S")
     progress3 = f"""
@@ -418,8 +431,8 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    thinking3 = f"[{now3}] ✅ Agent#3 Analyzer — 分析完成\n---\n{analysis_result}\n---\n"
-    yield get_text(lang, "pipeline_running"), progress3, thinking3
+    cumulative_log += f"\n[{now3}] ✅ Agent#3 Analyzer — 分析完成\n"
+    yield get_text(lang, "pipeline_running"), progress3, cumulative_log, analysis_report, script_report
 
     # ── Agent#4: Generator (Real DeepSeek AI — script generation) ────
     now4_start = datetime.datetime.now().strftime("%H:%M:%S")
@@ -431,10 +444,11 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div><span style="color:#34D399;">✓</span> [{now4_start}] <b>Agent#4 Generator</b> — DeepSeek 正在生成脚本...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    thinking4_running = f"[{now4_start}] 🧠 Agent#4 Generator — 正在调用 DeepSeek 生成短视频脚本...\n"
-    yield get_text(lang, "pipeline_running"), progress4_running, thinking4_running
+    cumulative_log += f"[{now4_start}] 🧠 Agent#4 Generator — 正在调用 DeepSeek 生成短视频脚本...\n"
+    yield get_text(lang, "pipeline_running"), progress4_running, cumulative_log, analysis_report, script_report
 
     # Stream DeepSeek script generation token-by-token
+    # AND simultaneously accumulate into script_report for the permanent display panel.
     script_result = ""
     system_prompt_generator = (
         "You are a professional short-video script writer. "
@@ -456,6 +470,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
     )
     async for token in _deepseek_stream_async(system_prompt_generator, user_prompt_generator, timeout=25.0):
         script_result += token
+        script_report = script_result  # mirror into permanent script panel
         now4_stream = datetime.datetime.now().strftime("%H:%M:%S")
         progress4_stream = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
@@ -465,11 +480,12 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div><span style="color:#34D399;">✓</span> [{now4_stream}] <b>Agent#4 Generator</b> — DeepSeek 正在流式生成脚本...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-        thinking4_stream = f"[{now4_stream}] 🧠 Agent#4 Generator — 实时脚本输出:\n{script_result}\n"
-        yield get_text(lang, "pipeline_running"), progress4_stream, thinking4_stream
+        cumulative_log += token
+        yield get_text(lang, "pipeline_running"), progress4_stream, cumulative_log, analysis_report, script_report
 
     if not script_result.strip():
         script_result = "⚠️ DeepSeek 未返回有效脚本内容"
+        script_report = script_result
 
     # Write script to a preview file for the video component
     import uuid
@@ -488,8 +504,8 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div><span style="color:#34D399;">✓</span> [{now4}] <b>Agent#4 Generator</b> — 脚本生成完成</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    thinking4 = f"[{now4}] ✅ Agent#4 Generator — 脚本生成完成\n---\n{script_result}\n---\n"
-    yield get_text(lang, "pipeline_running"), progress4, thinking4
+    cumulative_log += f"\n[{now4}] ✅ Agent#4 Generator — 脚本生成完成\n"
+    yield get_text(lang, "pipeline_running"), progress4, cumulative_log, analysis_report, script_report
 
     # ── Agent#5: Uploader (simulated placeholder) ────────────────────
     now5 = datetime.datetime.now().strftime("%H:%M:%S")
@@ -501,14 +517,14 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div><span style="color:#34D399;">✓</span> [{now5}] <b>Agent#4 Generator</b> — 完成</div>
   <div><span style="color:#34D399;">✓</span> [{now5}] <b>Agent#5 Uploader</b> — 上传完成</div>
 </div>"""
-    thinking5 = f"[{now5}] ✅ Pipeline 全部完成 — 5个 Agent 已执行完毕\n"
-    yield get_text(lang, "pipeline_running"), progress5, thinking5
+    cumulative_log += f"[{now5}] ✅ Pipeline 全部完成 — 5个 Agent 已执行完毕\n"
+    yield get_text(lang, "pipeline_running"), progress5, cumulative_log, analysis_report, script_report
 
 async def do_pipeline(url, platform, lang):
-    """Async generator pipeline that yields progress tuples without blocking the event loop."""
+    """Async generator pipeline that yields 5-element progress tuples (status, progress, cumulative_log, analysis_report, script_report)."""
     if not url.strip():
         # Return a single yield for empty URL
-        yield get_text(lang, "url_placeholder"), None, ""
+        yield get_text(lang, "url_placeholder"), None, "", "", ""
         return
     global _LANG
     _LANG = lang
@@ -824,6 +840,18 @@ def build_ui():
                     interactive=False,
                 )
 
+                # ── Permanent Output Panel A: DeepSeek Analysis Report ──
+                gr.Markdown(f"### {_('section_analysis_report')}")
+                analysis_report_md = gr.Markdown(
+                    value=f"*{_('thinking_placeholder')}*",
+                )
+
+                # ── Permanent Output Panel B: DeepSeek 60s Script Blueprint ──
+                gr.Markdown(f"### {_('section_script_output')}")
+                script_output_md = gr.Markdown(
+                    value=f"*{_('thinking_placeholder')}*",
+                )
+
                 # Video Gallery
                 gr.Markdown(f"### 🎬 {_('section_latest_video')}")
                 output_video = gr.Video(
@@ -941,11 +969,11 @@ def build_ui():
 
         new_chat_btn.click(new_chat, outputs=[chatbot, msg_input])
 
-        # ─── Pipeline event handler (with safety timeout) ───────────
+        # ─── Pipeline event handler — routes 5-element yield to 5 UI components ───
         run_pipeline_btn.click(
             fn=do_pipeline,
             inputs=[scout_url, scout_platform, lang_state],
-            outputs=[scout_url, pipeline_progress, thinking_window],
+            outputs=[scout_url, pipeline_progress, thinking_window, analysis_report_md, script_output_md],
         )
 
         def update_lang_state(lang_display):

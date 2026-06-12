@@ -273,8 +273,8 @@ class TestPipelineExceptionSafety(unittest.TestCase):
         result = self._collect(do_pipeline("", "YouTube", "zh"))
         self.assertIsNotNone(result, "Pipeline must yield at least one tuple")
         self.assertIsInstance(result, tuple, "Pipeline must return a tuple")
-        self.assertEqual(len(result), 3, "Pipeline must return (status, html, thinking)")
-        status, progress, thinking = result
+        self.assertEqual(len(result), 5, "Pipeline must return (status, html, cumulative_log, analysis_report, script_report)")
+        status, progress, cumulative_log, analysis_report, script_report = result
         self.assertIsNotNone(status, "Status must not be None")
         self.assertIsInstance(status, str, "Status must be a string")
         self.assertGreater(len(status), 0, "Empty URL should produce non-empty status text")
@@ -290,10 +290,12 @@ class TestPipelineExceptionSafety(unittest.TestCase):
                 "en",
             ))
             self.assertIsNotNone(result)
-            status, progress, thinking = result
+            status, progress, cumulative_log, analysis_report, script_report = result
             self.assertIsInstance(status, str)
             self.assertIsInstance(progress, str)
-            self.assertIsInstance(thinking, str)
+            self.assertIsInstance(cumulative_log, str)
+            self.assertIsInstance(analysis_report, str)
+            self.assertIsInstance(script_report, str)
         except Exception as e:
             self.fail(f"do_pipeline raised an unhandled exception: {e}")
 
@@ -307,7 +309,7 @@ class TestPipelineExceptionSafety(unittest.TestCase):
             "en",
         ))
         self.assertIsNotNone(result)
-        status, _, _ = result
+        status, _, _, _, _ = result
         self.assertIsInstance(status, str)
 
     def test_do_pipeline_zh_lang(self):
@@ -320,7 +322,7 @@ class TestPipelineExceptionSafety(unittest.TestCase):
             "zh",
         ))
         self.assertIsNotNone(result)
-        status, _, _ = result
+        status, _, _, _, _ = result
         self.assertIsInstance(status, str)
 
     def test_invalid_url_format_still_returns_strings(self):
@@ -334,7 +336,7 @@ class TestPipelineExceptionSafety(unittest.TestCase):
                 "en",
             ))
             self.assertIsNotNone(result)
-            _, progress, _ = result
+            _, progress, _, _, _ = result
             self.assertIsInstance(progress, str)
         except Exception as e:
             self.fail(f"Pipeline crashed on invalid URL: {e}")
@@ -356,10 +358,12 @@ class TestPipelineExceptionSafety(unittest.TestCase):
             self.assertLess(elapsed, 5.0,
                             f"Pipeline must finish within 5s, took {elapsed:.2f}s")
             self.assertIsNotNone(result)
-            status, progress, thinking = result
+            status, progress, cumulative_log, analysis_report, script_report = result
             self.assertIsInstance(status, str)
             self.assertIsInstance(progress, str)
-            self.assertIsInstance(thinking, str)
+            self.assertIsInstance(cumulative_log, str)
+            self.assertIsInstance(analysis_report, str)
+            self.assertIsInstance(script_report, str)
             self.assertGreater(len(progress), 0, "Progress HTML must not be empty")
         except Exception as e:
             self.fail(f"Pipeline concurrency test raised an exception: {e}")
@@ -394,16 +398,21 @@ class TestPipelineExceptionSafety(unittest.TestCase):
             self.assertGreater(len(all_results), 0,
                                "Pipeline must yield at least one tuple")
             # Check that at least one yield contains the API key warning
+            # Index 2 is cumulative_log in the 5-element tuple
             found_warning = any(
                 "OPENAI_API_KEY" in r[2] for r in all_results
             )
             self.assertTrue(found_warning,
                             "Pipeline must show API key warning when key is missing in at least one yield")
-            # Verify last yield (final completion) also exists
-            last_status, last_progress, last_thinking = all_results[-1]
+            # Verify last yield (final completion) also exists — 5-element tuple
+            last = all_results[-1]
+            self.assertEqual(len(last), 5)
+            last_status, last_progress, last_cumulative, last_analysis, last_script = last
             self.assertIsInstance(last_status, str)
             self.assertIsInstance(last_progress, str)
-            self.assertIsInstance(last_thinking, str)
+            self.assertIsInstance(last_cumulative, str)
+            self.assertIsInstance(last_analysis, str)
+            self.assertIsInstance(last_script, str)
         except Exception as e:
             self.fail(f"Pipeline fallback test raised an exception: {e}")
         finally:

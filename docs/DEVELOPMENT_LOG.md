@@ -130,3 +130,37 @@ Replaced static mock strings `（模拟）` in Agent#3 (Analyzer) and Agent#4 (G
 
 ### Breaking-Change Impact Analysis
 - **None**: The pipeline yield signature is preserved. All existing tests continue to pass (mock `_call_deepseek_blocking` is simply replaced with mock `_call_deepseek_stream`).
+
+---
+
+## 2026-06-12 — 日志覆盖 Bug 修复 & 永久输出面板重构 (Phase 5)
+
+### Bug 描述
+- **用户报告**: 实时分析日志"一闪而过，没有保留，无法查看"。用户在屏幕上看到 Agent#3 的 DeepSeek 内容分析，但瞬间被 Agent#4/Agent#5 的输出覆盖。
+- **根因分析**: `_run_pipeline_scout_async()` 中，每个 Agent 步骤的 `yield` 向 `thinking_window` 传递的是**独立构造的字符串**。Agent#3 的 `thinking3_stream` 仅包含 Agent#3 的累积 token；Agent#4 开始时，`thinking4_stream` 从零重新构造，完全抹除了 Agent#3 的内容。最终 yield 仅显示 Agent#5 的 `thinking5`（"Pipeline 全部完成"），之前所有 Agent 的分析成果全部丢失。
+- **架构缺失**: 系统中不存在"永久展示面板"。分析报告和脚本蓝图仅存在于临时变量中，从未被持久化到独立的 UI 组件。用户无法在流水线完成后回看或复制内容。
+
+### 解决方案 — 追加式日志 + 专属成果看板
+
+#### 1. 日志改为追加模式 (Append-Only)
+- 在 `_run_pipeline_scout_async()` 中引入 `cumulative_log` 累加器字符串。
+- 每个 Agent 步骤向 `cumulative_log` 追加新内容，而非覆盖。
+- 每次 `yield` 都传递完整的 `cumulative_log`，Gradio 渲染全部历史。
+
+#### 2. 新增两个永久成果展示组件
+- **Component A** — `analysis_report_md` (`gr.Markdown`): 【 📊 DeepSeek 爆款内容分析报告 】
+  - Agent#3 流式输出时实时镜像写入
+  - 流水线完成后保持冻结，用户可随时阅读/复制
+- **Component B** — `script_output_md` (`gr.Markdown`): 【 📝 DeepSeek 60秒短视频分镜剧本 】
+  - Agent#4 流式输出时实时镜像写入
+  - 流水线完成后保持冻结，用户可随时阅读/复制
+
+#### 3. 动态路由改造
+- `do_pipeline` 的 yield 元组从 `(status, progress, thinking)` 扩展为 `(status, progress, cumulative_log, analysis_report, script_report)`
+- 事件绑定的 outputs 从 3 个扩展到 5 个
+- 新增 i18n 词条 `section_analysis_report` 和 `section_script_output`
+
+### Breaking-Change Impact Analysis
+- **Yield 元组扩展**: `do_pipeline` 的 yield 从 3 元素变为 5 元素。所有调用方（Gradio 事件绑定）需要同步更新 outputs 列表。没有任何现有功能被移除。
+- **测试影响**: `TestPipelineExceptionSafety` 的 `_collect` 返回的元组长度从 3 变为 5。需要在 `test_pipeline_real_ai_fallback_no_key` 中检查更多的 yield 元素。测试语义不变。
+- **i18n 兼容**: 新增的词条已添加到 `i18n.py` 的中英文区域，不破坏现有翻译键。

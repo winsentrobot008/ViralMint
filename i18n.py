@@ -246,6 +246,8 @@ LOCALIZATION = {
         "section_live_progress": "Live Pipeline Progress",
         "section_thinking_window": "Agent Live Thinking Window",
         "section_latest_video": "Latest Minted Video Output",
+        "section_analysis_report": "📊 DeepSeek Viral Content Analysis Report",
+        "section_script_output": "📝 DeepSeek 60s Short-Video Script Blueprint",
 
         # ─── Settings Accordion ──────────────────────────────
         "accordion_settings": "Advanced System Configurations",
@@ -515,6 +517,8 @@ LOCALIZATION = {
         "section_live_progress": "实时管线进度",
         "section_thinking_window": "智能体实时思考窗口",
         "section_latest_video": "最新生成的视频",
+        "section_analysis_report": "📊 DeepSeek 爆款内容分析报告",
+        "section_script_output": "📝 DeepSeek 60秒短视频分镜剧本",
 
         # ─── Settings Accordion ──────────────────────────────
         "accordion_settings": "高级系统配置",
