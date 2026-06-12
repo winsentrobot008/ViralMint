@@ -355,6 +355,62 @@ class TestPipelineExceptionSafety(unittest.TestCase):
             self.fail(f"Pipeline concurrency test raised an exception: {e}")
 
 
+class TestYouTubeScoutExceptionSafety(unittest.TestCase):
+    """Verify search_youtube never propagates exceptions — always returns []."""
+
+    def test_live_url_handling_safety(self):
+        """search_youtube must return [] on ImportError/missing key, never raise."""
+        import asyncio
+
+        # Test 1: Missing API key should return [], not raise
+        async def _test_no_key():
+            from backend.services.youtube_scout import search_youtube
+            result = await search_youtube(
+                niche="test video",
+                api_key="",  # Empty key
+                max_results=5,
+            )
+            self.assertIsInstance(result, list,
+                                  "Empty API key must return a list, not raise")
+            return result
+
+        result = asyncio.run(_test_no_key())
+        self.assertEqual(result, [],
+                         "Empty API key must return empty list")
+
+        # Test 2: Invalid API key should return [], not raise
+        async def _test_invalid_key():
+            from backend.services.youtube_scout import search_youtube
+            result = await search_youtube(
+                niche="test video",
+                api_key="INVALID_KEY_12345",
+                max_results=5,
+            )
+            self.assertIsInstance(result, list,
+                                  "Invalid API key must return a list, never raise")
+            return result
+
+        result = asyncio.run(_test_invalid_key())
+        self.assertEqual(result, [],
+                         "Invalid API key must return empty list")
+
+        # Test 3: gibberish niche should return [] (not raise on API call)
+        async def _test_gibberish():
+            from backend.services.youtube_scout import search_youtube
+            result = await search_youtube(
+                niche="zzzzzzzxxxxxx",
+                api_key="INVALID_KEY_12345",
+                max_results=5,
+            )
+            self.assertIsInstance(result, list,
+                                  "Gibberish niche must return a list, never raise")
+            return result
+
+        result = asyncio.run(_test_gibberish())
+        self.assertEqual(result, [],
+                         "Gibberish niche must return empty list")
+
+
 class TestLegacyConfigFallback(unittest.TestCase):
     """Verify legacy config model identifiers are sanitized on load."""
 

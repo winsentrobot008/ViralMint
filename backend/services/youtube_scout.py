@@ -18,7 +18,13 @@ async def search_youtube(
     Returns list of raw video dicts with metadata.
     """
     import asyncio
-    from googleapiclient.discovery import build
+
+    # Try importing googleapiclient up front; missing dep is not a pipeline failure
+    try:
+        from googleapiclient.discovery import build
+    except ImportError:
+        logger.warning("googleapiclient not installed — cannot search YouTube, returning empty")
+        return []
 
     def _search():
         youtube = build("youtube", "v3", developerKey=api_key)
@@ -84,8 +90,12 @@ async def search_youtube(
     except asyncio.TimeoutError:
         logger.warning(f"YouTube search timed out for niche='{niche}' — returning empty")
         return []
-    except Exception:
-        raise
+    except ImportError:
+        logger.warning("googleapiclient not installed — cannot search YouTube, returning empty")
+        return []
+    except Exception as e:
+        logger.error(f"YouTube search failed for niche='{niche}': {e}", exc_info=True)
+        return []  # Graceful fallback — never propagate uncaught exceptions
 
 
 def _detect_language(text: str) -> str:

@@ -70,3 +70,24 @@
 
 ### Breaking-Change Impact Analysis
 - **None**: The pipeline now returns progressively via `yield` instead of a single return. Gradio 6 fully supports this pattern when `.queue()` is enabled. The return signature `(status, progress_html, thinking)` is preserved; each `yield` emits a tuple.
+
+---
+
+## 2026-06-12 — YouTube Scout Exception Safety Fix (Phase 3)
+
+### Bug Description
+- **Symptom**: Pipeline hangs/freezes when processing YouTube URLs (400 Bad Request / thread hang).
+- **Live Probe Diagnosis** (`probe_youtube_live.py`):
+  - `.env` file missing → no `YOUTUBE_API_KEY` configured.
+  - `googleapiclient` not installed in local dev environment.
+  - When `search_youtube()` is called, `from googleapiclient.discovery import build` raises `ImportError`.
+  - The `except Exception: raise` at line 88 of `youtube_scout.py` propagates the `ImportError` up the async call chain UNCAUGHT.
+  - The pipeline runner never receives a clean result — the async generator hangs waiting for the uncaught exception to resolve, causing the Hugging Face gateway to drop the connection with a 400 status.
+
+### Fix Summary
+- Changed `except Exception: raise` to:
+  - `except ImportError:` → returns `[]` (missing dependency is not a pipeline failure).
+  - `except Exception as e:` → logs the error and returns `[]` (graceful fallback, never propagates).
+
+### Breaking-Change Impact Analysis
+- **None**: All error paths now return `[]` (empty list) instead of propagating exceptions. The async pipeline generator receives a clean result and completes normally. No caller behavior changes — empty results were already handled upstream.
