@@ -7,3 +7,4 @@ pydantic
 pydantic-settings
 cryptography
 google-api-python-client>=2.130.0
+openai>=1.55.0

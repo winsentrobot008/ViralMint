@@ -241,9 +241,13 @@ class TestPipelineExceptionSafety(unittest.TestCase):
     def setUp(self):
         self.planner_patcher = patch("app.PLANNER_AVAILABLE", False)
         self.planner_patcher.start()
+        # Mock DeepSeek AI calls so tests stay fast and isolated
+        self.mock_deepseek = patch("app._call_deepseek_blocking", return_value="模拟分析结果: 视频具有高互动潜力")
+        self.mock_deepseek.start()
 
     def tearDown(self):
         self.planner_patcher.stop()
+        self.mock_deepseek.stop()
 
     def _collect(self, async_gen):
         """Helper: iterate an async generator and return the last yielded tuple."""
@@ -353,6 +357,56 @@ class TestPipelineExceptionSafety(unittest.TestCase):
             self.assertGreater(len(progress), 0, "Progress HTML must not be empty")
         except Exception as e:
             self.fail(f"Pipeline concurrency test raised an exception: {e}")
+
+    def _collect_all(self, async_gen):
+        """Helper: iterate an async generator and return ALL yielded tuples."""
+        import asyncio
+        results = []
+        async def _iterate():
+            async for item in async_gen:
+                results.append(item)
+            return results
+        asyncio.run(_iterate())
+        return results
+
+    def test_pipeline_real_ai_fallback_no_key(self):
+        """When OPENAI_API_KEY is missing, pipeline must show warning, not freeze."""
+        from app import do_pipeline
+        import os
+
+        # Temporarily remove the mock and the env var to test graceful degradation
+        self.mock_deepseek.stop()
+        old_key = os.environ.pop("OPENAI_API_KEY", None)
+        old_url = os.environ.pop("OPENAI_BASE_URL", None)
+
+        try:
+            all_results = self._collect_all(do_pipeline(
+                "https://youtube.com/watch?v=test-fallback",
+                "YouTube",
+                "en",
+            ))
+            self.assertGreater(len(all_results), 0,
+                               "Pipeline must yield at least one tuple")
+            # Check that at least one yield contains the API key warning
+            found_warning = any(
+                "OPENAI_API_KEY" in r[2] for r in all_results
+            )
+            self.assertTrue(found_warning,
+                            "Pipeline must show API key warning when key is missing in at least one yield")
+            # Verify last yield (final completion) also exists
+            last_status, last_progress, last_thinking = all_results[-1]
+            self.assertIsInstance(last_status, str)
+            self.assertIsInstance(last_progress, str)
+            self.assertIsInstance(last_thinking, str)
+        except Exception as e:
+            self.fail(f"Pipeline fallback test raised an exception: {e}")
+        finally:
+            # Restore env vars
+            if old_key is not None:
+                os.environ["OPENAI_API_KEY"] = old_key
+            if old_url is not None:
+                os.environ["OPENAI_BASE_URL"] = old_url
+            self.mock_deepseek.start()
 
 
 class TestYouTubeScoutExceptionSafety(unittest.TestCase):

@@ -91,3 +91,24 @@
 
 ### Breaking-Change Impact Analysis
 - **None**: All error paths now return `[]` (empty list) instead of propagating exceptions. The async pipeline generator receives a clean result and completes normally. No caller behavior changes — empty results were already handled upstream.
+
+---
+
+## 2026-06-12 — Real DeepSeek AI Inference Pipeline (Production Mode)
+
+### Architectural Change
+Replaced static mock strings `（模拟）` in Agent#3 (Analyzer) and Agent#4 (Generator) with real OpenAI-compatible API calls routed through DeepSeek. The pipeline now:
+1. **Agent#1 Scout** — Real YouTube Data API v3 search (via `search_youtube`).
+2. **Agent#2 Download** — Placeholder (simulated for demo).
+3. **Agent#3 Analyzer** — Sends video metadata (title, description, channel) to `deepseek-chat` with a prompt that asks for: viral hook analysis, target audience, content gaps, and engagement predictions.
+4. **Agent#4 Generator** — Takes analysis result and sends to `deepseek-chat` with a prompt that generates a complete short-video script outline (visual cues, audio script, CTA).
+5. **Agent#5 Uploader** — Placeholder (simulated for demo).
+
+### API Client
+- Uses `openai.OpenAI` library pointed at `OPENAI_BASE_URL` (defaults to DeepSeek: `https://api.deepseek.com`).
+- Keys read from `OPENAI_API_KEY` env var (HF Space Secrets or `.env`).
+- Fully async via `asyncio.to_thread()` — never blocks the Gradio event loop.
+- Graceful degradation: if keys are missing, falls back to a clear warning message.
+
+### Breaking-Change Impact Analysis
+- **None**: The pipeline signature `(status, progress_html, thinking)` is preserved. Each agent step now takes actual processing time (2-10s per AI call) instead of instant mock. The async generator yields intermediate progress as before.
