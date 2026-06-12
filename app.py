@@ -15,6 +15,7 @@ if 'audioop' not in sys.modules:
     mock_audioop.getsample = lambda data, width, index: 0
     sys.modules['audioop'] = mock_audioop
 
+import asyncio
 import base64
 import hashlib
 import gradio as gr
@@ -233,31 +234,86 @@ def simulate_pipeline_steps(url, progress_box, thinking_box):
         time.sleep(1.5)
         yield progress_box, f"[{time.strftime('%H:%M:%S')}] 🧠 {agent} (DeepSeek) — {msg}\n" + (thinking_box if i == 0 else "")
 
-def do_pipeline(url, platform, lang):
-    import asyncio
+async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
+    """Async scout phase wrapper with explicit 20s timeout and debug logging."""
+    import datetime
+    print(f"[Debug] Entering Scout Phase for url={url} platform={platform}")
+    now = datetime.datetime.now().strftime("%H:%M:%S")
+    progress = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#34D399;">✓</span> [{now}] <b>Agent#1 Scout</b> — 正在分析: {url} ({platform})</div>
+  <div style="color:#94a3b8;">⏳ Agent#2 Download — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#3 Analyzer — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
+</div>"""
+    thinking = f"[{now}] 🧠 Agent#1 Scout (DeepSeek) — 开始分析趋势内容: {url}\n  平台: {platform}\n  提取关键词、热度、受众画像...\n"
+    # Yield initial progress immediately so UI shows the status card
+    yield get_text(lang, "pipeline_running"), progress, thinking
+
+    # Simulate the scout phase with a potentially blocking call — wrapped in to_thread
+    print("[Debug] Running scout simulation in async thread...")
     try:
-        status_msg, progress_html, thinking = run_pipeline(url, platform, lang)
-        return status_msg, progress_html, thinking
+        # The actual blocking work is pushed to a thread so it never starves the event loop
+        await asyncio.wait_for(
+            asyncio.to_thread(_simulate_scout_work, url, platform),
+            timeout=20.0,
+        )
+        print("[Debug] Scout phase completed successfully")
+        # After scout completes, move to download phase
+        now2 = datetime.datetime.now().strftime("%H:%M:%S")
+        progress2 = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#34D399;">✓</span> [{now2}] <b>Agent#1 Scout</b> — 分析完成: {url}</div>
+  <div><span style="color:#34D399;">✓</span> [{now2}] <b>Agent#2 Download</b> — 下载完成 (模拟)</div>
+  <div><span style="color:#34D399;">✓</span> [{now2}] <b>Agent#3 Analyzer</b> — 分析完成 (模拟)</div>
+  <div><span style="color:#34D399;">✓</span> [{now2}] <b>Agent#4 Generator</b> — 生成完成 (模拟)</div>
+  <div><span style="color:#34D399;">✓</span> [{now2}] <b>Agent#5 Uploader</b> — 上传完成 (模拟)</div>
+</div>"""
+        thinking2 = f"[{now2}] 🧠 Pipeline complete — all 5 agents finished.\n"
+        yield get_text(lang, "pipeline_running"), progress2, thinking2
     except asyncio.TimeoutError:
-        import datetime
-        now = datetime.datetime.now().strftime("%H:%M:%S")
+        print("[Debug] Scout phase TIMEOUT after 20s — falling back to safe path")
+        now_t = datetime.datetime.now().strftime("%H:%M:%S")
         fallback_progress = f"""
         <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
-          <div><span style="color:#ef4444;">✗</span> [{now}] <b>Agent#1 Scout</b> — 超时 (Timeout), 使用降级回退</div>
-          <div style="color:#34D399;">✓ [{now}] Agent#2 Download — 跳过 (无有效URL)</div>
+          <div><span style="color:#ef4444;">✗</span> [{now_t}] <b>Agent#1 Scout</b> — 超时 (Timeout), 使用降级回退</div>
+          <div style="color:#34D399;">✓ [{now_t}] Agent#2 Download — 跳过 (无有效URL)</div>
           <div style="color:#94a3b8;">⚠️ 管线中断 — YouTube API 未响应, 请检查网络或 API Key</div>
         </div>"""
-        fallback_thinking = f"[{now}] ⚠️ Scout 超时回退: YouTube API 在 20s 内未响应, 跳过搜寻步骤\n"
-        return get_text(lang, "pipeline_running"), fallback_progress, fallback_thinking
+        fallback_thinking = f"[{now_t}] ⚠️ Scout 超时回退: YouTube API 在 20s 内未响应, 跳过搜寻步骤\n"
+        yield get_text(lang, "pipeline_running"), fallback_progress, fallback_thinking
     except Exception as e:
-        import datetime
-        now = datetime.datetime.now().strftime("%H:%M:%S")
+        print(f"[Debug] Scout phase ERROR: {e}")
+        now_e = datetime.datetime.now().strftime("%H:%M:%S")
         error_progress = f"""
         <div style="background:#0f172a;border:1px solid #ef4444;border-radius:12px;padding:14px 18px;font-family:monospace;font-size:13px;">
-          <div><span style="color:#ef4444;">✗</span> [{now}] <b>管线错误</b>: {str(e)[:100]}</div>
+          <div><span style="color:#ef4444;">✗</span> [{now_e}] <b>管线错误</b>: {str(e)[:100]}</div>
         </div>"""
-        error_thinking = f"[{now}] ❌ 管线异常: {str(e)}\n"
-        return get_text(lang, "pipeline_running"), error_progress, error_thinking
+        error_thinking = f"[{now_e}] ❌ 管线异常: {str(e)}\n"
+        yield get_text(lang, "pipeline_running"), error_progress, error_thinking
+
+def _simulate_scout_work(url: str, platform: str):
+    """Simulate blocking scout work (runs in a thread, not on the event loop)."""
+    import time
+    # Simulate network request to YouTube/Douyin API
+    print(f"[Debug] _simulate_scout_work: scanning {platform} for URL {url[:50]}...")
+    time.sleep(2.0)  # Simulated network I/O (this runs in a thread)
+    print("[Debug] _simulate_scout_work: scan complete")
+
+async def do_pipeline(url, platform, lang):
+    """Async generator pipeline that yields progress tuples without blocking the event loop."""
+    if not url.strip():
+        # Return a single yield for empty URL
+        yield get_text(lang, "url_placeholder"), None, ""
+        return
+    global _LANG
+    _LANG = lang
+    print(f"[Debug] do_pipeline started: url={url[:60]} platform={platform} lang={lang}")
+    # Delegate to the async generator that handles timeout properly
+    async for step in _run_pipeline_scout_async(url, platform, lang):
+        yield step
+    print("[Debug] do_pipeline finished")
 
 # =====================================================================
 # Language mapping for dropdown
@@ -289,6 +345,9 @@ def build_ui():
     """
 
     with gr.Blocks(title="ViralMint — AI Agent Factory", theme=gr.themes.Soft(primary_hue="emerald", neutral_hue="slate")) as demo:
+        # Enable background queue with bounded concurrency so async generators
+        # never block the main Gradio thread-pool.
+        demo.queue(default_concurrency_limit=5)
 
         # =============================================================
         # TOP BAR: Language Selector

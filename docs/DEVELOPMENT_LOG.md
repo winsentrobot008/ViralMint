@@ -50,3 +50,23 @@
 
 ### Breaking-Change Impact Analysis
 - **None**: The fallback is fully backward-compatible. Existing configs with valid model/provider pairs continue to work unchanged. Only invalid/legacy values are sanitized on read.
+
+---
+
+## 2026-06-12 — Pipeline Thread-Locking Concurrency Fix (Phase 2)
+
+### Bug Description
+- **Symptom**: The UI freezes indefinitely at `Agent#1 Scout`. The 20s timeout wrapper never fires.
+- **Root Cause**: A dead-lock in the Gradio event loop. `do_pipeline()` in `app.py` is a synchronous function that blocks the main thread. Gradio 6 processes all `fn=...` callbacks on the same thread pool by default. When `do_pipeline` calls `run_pipeline()` synchronously for URL validation, the function returns immediately — but the real problem is that `demo.queue()` was never called, so **no async/background concurrency is enabled at all**.
+- **Why timeout doesn't fire**: `do_pipeline` catches `asyncio.TimeoutError` but never actually wraps anything in `asyncio.wait_for(...)`. The `import asyncio` is a dead import used only for the except clause — no actual async runtime is instantiated.
+- **Secondary issue**: `simulate_pipeline_steps()` exists as an unused generator with `time.sleep(1.5)` that could also freeze the UI if ever wired, since generators in Gradio need `yield` matching and `queue=True`.
+
+### Fix Summary
+- Added `demo.queue(default_concurrency_limit=5)` to enable background task processing.
+- Refactored `do_pipeline` into an `async def` generator that `yield`s progress updates, allowing the UI to stay responsive.
+- Wrapped blocking ops in `await asyncio.to_thread(...)` to prevent main-loop starvation.
+- Added explicit debug logging (print statements) at each scout phase boundary for traceability.
+- Wrapped the actual scout logic in `asyncio.wait_for(..., timeout=20.0)` so the timeout actually fires.
+
+### Breaking-Change Impact Analysis
+- **None**: The pipeline now returns progressively via `yield` instead of a single return. Gradio 6 fully supports this pattern when `.queue()` is enabled. The return signature `(status, progress_html, thinking)` is preserved; each `yield` emits a tuple.

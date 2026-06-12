@@ -239,23 +239,33 @@ class TestPipelineExceptionSafety(unittest.TestCase):
     """Verify pipeline handler gracefully handles errors without crashing."""
 
     def setUp(self):
-        # Patch PLANNER_AVAILABLE and YTDLP_AVAILABLE to avoid import issues
         self.planner_patcher = patch("app.PLANNER_AVAILABLE", False)
         self.planner_patcher.start()
 
     def tearDown(self):
         self.planner_patcher.stop()
 
+    def _collect(self, async_gen):
+        """Helper: iterate an async generator and return the last yielded tuple."""
+        import asyncio
+        results = []
+        async def _iterate():
+            async for item in async_gen:
+                results.append(item)
+            return results
+        asyncio.run(_iterate())
+        return results[-1] if results else None
+
     def test_do_pipeline_empty_url_returns_placeholder(self):
         """Pipeline with empty URL should return placeholder text not crash."""
         from app import do_pipeline
 
-        result = do_pipeline("", "YouTube", "zh")
+        result = self._collect(do_pipeline("", "YouTube", "zh"))
+        self.assertIsNotNone(result, "Pipeline must yield at least one tuple")
         self.assertIsInstance(result, tuple, "Pipeline must return a tuple")
         self.assertEqual(len(result), 3, "Pipeline must return (status, html, thinking)")
         status, progress, thinking = result
         self.assertIsNotNone(status, "Status must not be None")
-        # Should return placeholder text when URL is empty — any non-empty string is fine
         self.assertIsInstance(status, str, "Status must be a string")
         self.assertGreater(len(status), 0, "Empty URL should produce non-empty status text")
 
@@ -264,11 +274,13 @@ class TestPipelineExceptionSafety(unittest.TestCase):
         from app import do_pipeline
 
         try:
-            status, progress, thinking = do_pipeline(
+            result = self._collect(do_pipeline(
                 "https://youtube.com/watch?v=test123",
                 "YouTube",
                 "en",
-            )
+            ))
+            self.assertIsNotNone(result)
+            status, progress, thinking = result
             self.assertIsInstance(status, str)
             self.assertIsInstance(progress, str)
             self.assertIsInstance(thinking, str)
@@ -279,23 +291,26 @@ class TestPipelineExceptionSafety(unittest.TestCase):
         """Pipeline in English should return English status text."""
         from app import do_pipeline
 
-        status, _, _ = do_pipeline(
+        result = self._collect(do_pipeline(
             "https://youtube.com/watch?v=test",
             "TikTok",
             "en",
-        )
-        # Should not crash, status is just the pipeline_running text
+        ))
+        self.assertIsNotNone(result)
+        status, _, _ = result
         self.assertIsInstance(status, str)
 
     def test_do_pipeline_zh_lang(self):
         """Pipeline in Chinese should not crash."""
         from app import do_pipeline
 
-        status, _, _ = do_pipeline(
+        result = self._collect(do_pipeline(
             "https://douyin.com/video/test",
             "Douyin",
             "zh",
-        )
+        ))
+        self.assertIsNotNone(result)
+        status, _, _ = result
         self.assertIsInstance(status, str)
 
     def test_invalid_url_format_still_returns_strings(self):
@@ -303,14 +318,41 @@ class TestPipelineExceptionSafety(unittest.TestCase):
         from app import do_pipeline
 
         try:
-            status, progress, thinking = do_pipeline(
+            result = self._collect(do_pipeline(
                 "not-a-valid-url-at-all!!!",
                 "YouTube",
                 "en",
-            )
+            ))
+            self.assertIsNotNone(result)
+            _, progress, _ = result
             self.assertIsInstance(progress, str)
         except Exception as e:
             self.fail(f"Pipeline crashed on invalid URL: {e}")
+
+    def test_pipeline_thread_concurrency_safety(self):
+        """Pipeline async generator must complete within 5 seconds without hanging."""
+        from app import do_pipeline
+        import asyncio
+        import time
+
+        start = time.time()
+        try:
+            result = self._collect(do_pipeline(
+                "https://example.com/test",
+                "YouTube",
+                "en",
+            ))
+            elapsed = time.time() - start
+            self.assertLess(elapsed, 5.0,
+                            f"Pipeline must finish within 5s, took {elapsed:.2f}s")
+            self.assertIsNotNone(result)
+            status, progress, thinking = result
+            self.assertIsInstance(status, str)
+            self.assertIsInstance(progress, str)
+            self.assertIsInstance(thinking, str)
+            self.assertGreater(len(progress), 0, "Progress HTML must not be empty")
+        except Exception as e:
+            self.fail(f"Pipeline concurrency test raised an exception: {e}")
 
 
 class TestLegacyConfigFallback(unittest.TestCase):
