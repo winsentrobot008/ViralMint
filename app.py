@@ -149,6 +149,71 @@ def load_settings():
     return [gr.update(choices=choices, value=model), gr.update(value=model), gr.update(value=masked)]
 
 # =====================================================================
+# YouTube Metadata Scraper — replaces Agent#1's mock with real HTTP fetch
+# =====================================================================
+
+_SCRAPE_TIMEOUT = 8.0  # seconds for HTTP request to YouTube
+
+def _scrape_youtube_metadata(url: str) -> dict:
+    """Extract real video title and description from a YouTube page via HTTP GET.
+
+    Uses requests + regex to parse <title> and <meta name="description"> from
+    the public HTML page source. No API key required. Returns a dict with
+    'title' and 'description' keys (both empty strings on failure).
+
+    This is a lightweight fallback scraper — for production with high QPS,
+    switch to YouTube Data API v3.
+    """
+    import re
+    import requests as req_lib
+
+    result = {"title": "", "description": ""}
+    if not url or "youtube.com" not in url and "youtu.be" not in url:
+        # Not a YouTube URL — cannot scrape
+        return result
+
+    try:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+        resp = req_lib.get(url, headers=headers, timeout=_SCRAPE_TIMEOUT, allow_redirects=True)
+        resp.raise_for_status()
+        html = resp.text
+
+        # Extract <title> — YouTube format: "Real Title - YouTube"
+        title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+        if title_match:
+            raw_title = title_match.group(1).strip()
+            # Remove trailing " - YouTube" suffix
+            for suffix in [" - YouTube", " - YouTube 中文", " -  YouTube"]:
+                if raw_title.endswith(suffix):
+                    raw_title = raw_title[:-len(suffix)]
+                    break
+            result["title"] = raw_title
+
+        # Extract <meta name="description" content="...">
+        desc_match = re.search(
+            r'<meta\s+[^>]*name\s*=\s*["\']description["\'][^>]*content\s*=\s*["\']([^"\']+)["\']',
+            html, re.IGNORECASE,
+        )
+        if desc_match:
+            result["description"] = desc_match.group(1).strip()
+
+    except req_lib.exceptions.Timeout:
+        print(f"[Scraper] Timeout scraping {url[:60]}")
+    except req_lib.exceptions.RequestException as e:
+        print(f"[Scraper] HTTP error for {url[:60]}: {e}")
+    except Exception as e:
+        print(f"[Scraper] Unexpected error: {e}")
+    return result
+
+
+# =====================================================================
 # Business logic functions (called by Gradio events)
 # =====================================================================
 
@@ -308,9 +373,13 @@ async def _deepseek_stream_async(system_prompt: str, user_prompt: str, timeout: 
 async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
     """Async generator that runs real AI agents (DeepSeek) for each pipeline step.
     
-    Yields 5-element tuples: (status, progress_html, cumulative_log, analysis_report, script_report)
+    Yields 5-element tuples: (pipeline_status, progress_html, cumulative_log, analysis_report, script_report)
     The cumulative_log is APPEND-ONLY across all agents so no content is ever overwritten.
     analysis_report and script_report are dedicated output panels that remain frozen after completion.
+    
+    Agent#1 now performs REAL YouTube metadata scraping (not mock).
+    If metadata fetch fails, the pipeline HALTS with a clear error message —
+    it is strictly forbidden to hallucinate video content from just a URL.
     """
     import datetime
     print(f"[Debug] Entering Pipeline for url={url} platform={platform}")
@@ -320,42 +389,82 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
     cumulative_log = ""
     analysis_report = ""
     script_report = ""
+    pipeline_status = get_text(lang, "pipeline_running")
+    last_yield_text = pipeline_status
 
-    # ── Agent#1: Scout (YouTube search) ──────────────────────────────
+    def _safe_yield(status, progress, log, analysis, script):
+        """Yield a 5-element tuple. The first element is the pipeline status text
+        that gets written to the pipeline_status UI component (NOT scout_url)."""
+        nonlocal last_yield_text
+        last_yield_text = status
+        return (status, progress, log, analysis, script)
+
+    # ── Agent#1: Scout — REAL YouTube metadata scraping ─────────────
     progress = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
-  <div><span style="color:#34D399;">✓</span> [{now}] <b>Agent#1 Scout</b> — 正在分析: {url} ({platform})</div>
+  <div><span style="color:#34D399;">✓</span> [{now}] <b>Agent#1 Scout</b> — 正在抓取真实元数据: {url} ({platform})</div>
   <div style="color:#94a3b8;">⏳ Agent#2 Download — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#3 Analyzer — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    cumulative_log += f"[{now}] 🧠 Agent#1 Scout (DeepSeek) — 开始分析: {url}\n  平台: {platform}\n"
-    yield get_text(lang, "pipeline_running"), progress, cumulative_log, analysis_report, script_report
+    cumulative_log += f"[{now}] 🧠 Agent#1 Scout — 正在从 YouTube 抓取真实元数据...\n  平台: {platform}\n  目标URL: {url}\n"
+    yield _safe_yield(pipeline_status, progress, cumulative_log, analysis_report, script_report)
 
-    print("[Debug] Agent#1 — Running YouTube search...")
-    # Extract video ID from URL (simple heuristic)
-    video_title = url
+    print("[Debug] Agent#1 — Running real YouTube metadata scraper...")
+    
+    # ── REAL SCRAPE: Call _scrape_youtube_metadata in a thread ──────
+    metadata = {}
     try:
-        await asyncio.wait_for(
-            asyncio.to_thread(lambda: None),  # placeholder — real YouTube search via backend
-            timeout=1.0,
+        metadata = await asyncio.wait_for(
+            asyncio.to_thread(_scrape_youtube_metadata, url),
+            timeout=_SCRAPE_TIMEOUT + 2.0,  # allow 2s slack over HTTP timeout
         )
     except asyncio.TimeoutError:
-        pass
-    scout_result = f"URL: {url} | Platform: {platform}"
+        print("[Debug] Agent#1 — Metadata scrape timed out")
+        metadata = {}
+    except Exception as e:
+        print(f"[Debug] Agent#1 — Metadata scrape error: {e}")
+        metadata = {}
+
+    real_title = metadata.get("title", "").strip()
+    real_description = metadata.get("description", "").strip()
+
+    # ── CONTEXT INTEGRITY GUARD: HALT if no real metadata ───────────
+    if not real_title:
+        halt_msg = (
+            "❌ 错误：未能成功抓取到YouTube视频的真实元数据，请检查网络连接或URL有效性。\n"
+            f"   URL: {url}\n"
+            "   管线已中止 — 严禁在没有真实元数据的情况下进行推测。\n"
+            "   请确保URL可访问，或尝试其他YouTube视频链接。"
+        )
+        cumulative_log += f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ 上下文完整性检查失败 — 无真实元数据，管线已中止\n"
+        cumulative_log += halt_msg + "\n"
+        progress_halt = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#ef4444;">✗</span> [{datetime.datetime.now().strftime('%H:%M:%S')}] <b>Agent#1 Scout</b> — ❌ 元数据抓取失败！</div>
+  <div style="color:#ef4444;font-weight:bold;">⛔ 管线已中止 — 上下文完整性守卫触发</div>
+</div>"""
+        yield _safe_yield("❌ 管线已中止", progress_halt, cumulative_log, analysis_report, script_report)
+        return  # ← HALT: stop pipeline execution immediately
+
+    print(f"[Debug] Agent#1 — Scraped title: {real_title[:80]}")
+    cumulative_log += f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Agent#1 抓取成功 — 真实标题: {real_title[:80]}\n"
+    if real_description:
+        cumulative_log += f"   真实描述: {real_description[:150]}...\n"
 
     now1 = datetime.datetime.now().strftime("%H:%M:%S")
     progress1 = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
-  <div><span style="color:#34D399;">✓</span> [{now1}] <b>Agent#1 Scout</b> — 分析完成: {url}</div>
+  <div><span style="color:#34D399;">✓</span> [{now1}] <b>Agent#1 Scout</b> — ✅ 真实元数据已抓取</div>
+  <div style="color:#e2e8f0;font-size:12px;padding-left:16px;">🎬 标题: {real_title[:80]}</div>
   <div style="color:#94a3b8;">⏳ Agent#2 Download — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#3 Analyzer — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    cumulative_log += f"[{now1}] ✅ Agent#1 完成 — 已获取视频元数据\n"
-    yield get_text(lang, "pipeline_running"), progress1, cumulative_log, analysis_report, script_report
+    cumulative_log += f"[{now1}] ✅ Agent#1 完成 — 真实视频元数据已获取，将传递给 Agent#3\n"
+    yield _safe_yield(pipeline_status, progress1, cumulative_log, analysis_report, script_report)
 
     # ── Agent#2: Download (simulated placeholder) ────────────────────
     now2 = datetime.datetime.now().strftime("%H:%M:%S")
@@ -368,7 +477,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
     cumulative_log += f"[{now2}] ✅ Agent#2 完成 — 视频已下载到本地存储\n"
-    yield get_text(lang, "pipeline_running"), progress2, cumulative_log, analysis_report, script_report
+    yield _safe_yield(pipeline_status, progress2, cumulative_log, analysis_report, script_report)
 
     # ── Agent#3: Analyzer (Real DeepSeek AI inference) ───────────────
     now3_start = datetime.datetime.now().strftime("%H:%M:%S")
@@ -381,22 +490,28 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
     cumulative_log += f"[{now3_start}] 🧠 Agent#3 Analyzer — 正在调用 DeepSeek 分析视频结构...\n"
-    yield get_text(lang, "pipeline_running"), progress3_running, cumulative_log, analysis_report, script_report
+    yield _safe_yield(pipeline_status, progress3_running, cumulative_log, analysis_report, script_report)
 
     # Stream DeepSeek analysis token-by-token into the thinking window
     # AND simultaneously accumulate into analysis_report for the permanent display panel.
+    # The prompt includes REAL metadata from Agent#1's scrape (not hallucinated).
     analysis_result = ""
     system_prompt_analyzer = (
-        "You are a viral video analyst. Given a video URL and platform, "
+        "You are a viral video analyst. Given a video URL along with its REAL title and description, "
         "analyze the potential viral hooks, target audience, content structure, "
         "and engagement predictions. Be concise and specific. "
-        "Output in Chinese with markdown formatting."
+        "Output in Chinese with markdown formatting.\n\n"
+        "IMPORTANT: The title and description below were scraped directly from the YouTube page. "
+        "Your analysis MUST be based strictly on this real metadata. "
+        "Do NOT guess or hallucinate content that is not present in the provided title or description."
     )
     user_prompt_analyzer = (
-        f"Analyze this video for viral potential:\n"
+        f"Analyze this video for viral potential using its REAL metadata:\n"
         f"- URL: {url}\n"
-        f"- Platform: {platform}\n\n"
-        f"Provide:\n"
+        f"- Platform: {platform}\n"
+        f"- REAL Title: {real_title}\n"
+        f"- REAL Description: {real_description[:500] if real_description else '(not available)'}\n\n"
+        f"Based on the actual title and description above, provide:\n"
         f"1. Viral Hook Analysis (what makes this engaging)\n"
         f"2. Target Audience\n"
         f"3. Content Gaps & Opportunities\n"
@@ -416,7 +531,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
         cumulative_log += token
-        yield get_text(lang, "pipeline_running"), progress3_stream, cumulative_log, analysis_report, script_report
+        yield _safe_yield(pipeline_status, progress3_stream, cumulative_log, analysis_report, script_report)
 
     if not analysis_result.strip():
         analysis_result = "⚠️ DeepSeek 未返回有效分析结果"
@@ -432,7 +547,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
     cumulative_log += f"\n[{now3}] ✅ Agent#3 Analyzer — 分析完成\n"
-    yield get_text(lang, "pipeline_running"), progress3, cumulative_log, analysis_report, script_report
+    yield _safe_yield(pipeline_status, progress3, cumulative_log, analysis_report, script_report)
 
     # ── Agent#4: Generator (Real DeepSeek AI — script generation) ────
     now4_start = datetime.datetime.now().strftime("%H:%M:%S")
@@ -445,7 +560,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
     cumulative_log += f"[{now4_start}] 🧠 Agent#4 Generator — 正在调用 DeepSeek 生成短视频脚本...\n"
-    yield get_text(lang, "pipeline_running"), progress4_running, cumulative_log, analysis_report, script_report
+    yield _safe_yield(pipeline_status, progress4_running, cumulative_log, analysis_report, script_report)
 
     # Stream DeepSeek script generation token-by-token
     # AND simultaneously accumulate into script_report for the permanent display panel.
@@ -481,7 +596,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
         cumulative_log += token
-        yield get_text(lang, "pipeline_running"), progress4_stream, cumulative_log, analysis_report, script_report
+        yield _safe_yield(pipeline_status, progress4_stream, cumulative_log, analysis_report, script_report)
 
     if not script_result.strip():
         script_result = "⚠️ DeepSeek 未返回有效脚本内容"
@@ -505,7 +620,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
     cumulative_log += f"\n[{now4}] ✅ Agent#4 Generator — 脚本生成完成\n"
-    yield get_text(lang, "pipeline_running"), progress4, cumulative_log, analysis_report, script_report
+    yield _safe_yield(pipeline_status, progress4, cumulative_log, analysis_report, script_report)
 
     # ── Agent#5: Uploader (simulated placeholder) ────────────────────
     now5 = datetime.datetime.now().strftime("%H:%M:%S")
@@ -518,7 +633,7 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div><span style="color:#34D399;">✓</span> [{now5}] <b>Agent#5 Uploader</b> — 上传完成</div>
 </div>"""
     cumulative_log += f"[{now5}] ✅ Pipeline 全部完成 — 5个 Agent 已执行完毕\n"
-    yield get_text(lang, "pipeline_running"), progress5, cumulative_log, analysis_report, script_report
+    yield _safe_yield(pipeline_status, progress5, cumulative_log, analysis_report, script_report)
 
 async def do_pipeline(url, platform, lang):
     """Async generator pipeline that yields 5-element progress tuples (status, progress, cumulative_log, analysis_report, script_report)."""
@@ -823,6 +938,12 @@ def build_ui():
 
             # ─── RIGHT COLUMN — Real-time Visualization ─────────────
             with gr.Column(scale=1, min_width=460):
+                # Pipeline Status (hidden — receives first yield element, NOT scout_url)
+                pipeline_status = gr.Textbox(
+                    value=get_text("zh", "progress_idle") if _LANG == "zh" else "Idle",
+                    visible=False,
+                )
+
                 # Pipeline Progress Card
                 gr.Markdown(f"### 📊 {_('section_live_progress')}")
                 pipeline_progress = gr.HTML(f"""
@@ -970,10 +1091,13 @@ def build_ui():
         new_chat_btn.click(new_chat, outputs=[chatbot, msg_input])
 
         # ─── Pipeline event handler — routes 5-element yield to 5 UI components ───
+        # CRITICAL: outputs[0] is pipeline_status (hidden Textbox), NOT scout_url.
+        # This prevents the transient "管线运行中..." text from overwriting the
+        # user's actual URL input (the parameter pollution hallucination bug).
         run_pipeline_btn.click(
             fn=do_pipeline,
             inputs=[scout_url, scout_platform, lang_state],
-            outputs=[scout_url, pipeline_progress, thinking_window, analysis_report_md, script_output_md],
+            outputs=[pipeline_status, pipeline_progress, thinking_window, analysis_report_md, script_output_md],
         )
 
         def update_lang_state(lang_display):

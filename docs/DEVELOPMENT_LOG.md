@@ -41,6 +41,68 @@
 
 ---
 
+## 2026-06-12 — 致命幻觉回归：UI 参数污染与 Agent#1 空抓取 (Critical Hotfix)
+
+### Bug 描述
+- **用户现场 (Live Pipeline)**: 输入的YouTube视频是"深度工作专注音乐"（Deep Work Focus Music），但 Agent#3 和 Agent#4 生成了"醋泡鸡蛋弹力球"（vinegar and egg science experiment）的爆款脚本。
+- **日志证据**: Agent#3 明确声明 `分析将基于'管线运行中...'这一标题`，证明它看到的根本不是真实视频标题。
+
+### 根因分析 — 两个并行致命缺陷
+
+#### 缺陷 A: UI 状态竞态条件 — 参数污染 (Parameter Pollution)
+```
+run_pipeline_btn.click(
+    inputs=[scout_url, ...],
+    outputs=[scout_url, ...],  # ← 大忌！scout_url 同时是输入和输出
+)
+```
+- `scout_url` Textbox 同时位于 `inputs` 和 `outputs` 列表中。
+- 当 `do_pipeline()` 异步生成器第一次 `yield` 时，`yield` 元组的第一个元素 `get_text(lang, "pipeline_running")`（即"管线运行中..."）直接写回 `scout_url` 文本框。
+- 用户输入的合法 YouTube URL 被瞬态加载文本完全覆盖并**不可逆地丢失**。
+- 后续 Agent#3 和 Agent#4 收到的 `url` 参数虽然是正确的（Gradio 在第一次事件触发时快照了 input），但 UI 反馈完全失实。
+
+#### 缺陷 B: Agent#1 (Scout) 空操作 Mock — 零元数据提取
+```python
+# 在 _run_pipeline_scout_async 中 (app.py 第 340-344 行)
+await asyncio.wait_for(
+    asyncio.to_thread(lambda: None),  # ← 空操作！不抓取任何真实元数据
+    timeout=1.0,
+)
+```
+- Agent#1 执行 `lambda: None`——不对 YouTube URL 执行任何 HTTP 请求。
+- `scout_result = f"URL: {url} | Platform: {platform}"` 仅包含 URL 字符串，不包含视频标题、描述。
+- Agent#3 的 prompt 中仅传入了 URL 字符串和平台名，无任何真实元数据。
+- **DeepSeek 模型没有网页浏览能力**——它看不到 YouTube 页面内容，只能从 URL 字符串中"编造"内容。
+- 由于训练数据中"醋+鸡蛋=弹力球实验"是最常见的 YouTube 爆款标题，模型自由发挥时概率性选择了这个幻觉内容。
+
+### 修复摘要
+
+#### 1. UI 参数污染修复
+- 从 `run_pipeline_btn.click()` 的 `outputs` 列表中**删除** `scout_url`。
+- 新增 `pipeline_status` (gr.Textbox，只读隐藏或可见) 组件来接收状态文本。
+- 用户输入的 URL 在管线运行期间保持原样，不再被覆盖。
+
+#### 2. Agent#1 真实 HTTP 抓取
+- 新增 `_scrape_youtube_metadata(url: str) -> dict` 函数：
+  - 使用 `requests` 从 YouTube 视频页面下载 HTML。
+  - 用正则表达式提取 `<title>` 标签内容和 `<meta name="description">` 内容。
+  - 返回 `{"title": "...", "description": "..."}` 字典。
+  - 失败时返回空字典（`{}`），绝不抛出异常。
+- Agent#1 调用 `_scrape_youtube_metadata()` 替代 `lambda: None`。
+- 提取的 `real_title` 和 `real_description` 注入 Agent#3 的 prompt 上下文。
+
+#### 3. 上下文完整性守卫 (Context Integrity Guard)
+- Agent#3 的 prompt 逻辑修改：如果 `_scrape_youtube_metadata()` 返回空字典或缺少标题，Agent#3 **必须明确 HALT**。
+- 向用户输出：`"❌ 错误：未能成功抓取到YouTube视频的真实元数据，请检查网络连接或URL有效性。"`
+- 严禁在无真实元数据的情况下让 LLM 自由发挥。
+
+### Breaking-Change Impact Analysis
+- **UI Outputs 变更**: `run_pipeline_btn.click` 的 `outputs` 从 5 个变为 5 个（`scout_url` → `pipeline_status`）。组件数量不变但语义改变。Gradio 事件绑定需要同步更新。无旧代码被移除。
+- **Agent#1 行为变更**: Agent#1 现在执行真实 HTTP 请求，运行时间从 0 秒变为 1-3 秒。所有调用方（Gradio event loop）需要处理额外的延迟。这是期望行为——真实的抓取取代了空操作。
+- **Prompt 上下文变更**: Agent#3 的 prompt 现在包含真实元数据。LLM 输出将基于实际视频内容而非 URL 字符串。测试中的 mock 需要调整。
+- **测试影响**: 需要为 `_scrape_youtube_metadata` 添加新的测试用例。现有 `TestPipelineExceptionSafety` 中的 mock 仍然兼容——`_mock_deepseek_stream` 不受影响。
+
+
 ## 2026-06-12 — Legacy Config Model Fallback Fix
 
 ### Bug Description
