@@ -12,6 +12,10 @@ from backend.database import AsyncSessionLocal
 from backend.models.scout_result import ScoutResult
 from backend.models.downloaded_video import DownloadedVideo
 from backend.services.ytdlp_service import download_video
+from backend.services.playwright_transcript_service import (
+    transcript_service,
+    YouTubeTranscriptError,
+)
 from backend.core.ws_manager import ws_manager
 from backend.agents.job_helper import update_job_status
 from backend.config import settings
@@ -91,23 +95,54 @@ class DownloadAgent:
                     extract_audio=True,
                 )
 
-                # Save to DB
-                async with AsyncSessionLocal() as db:
-                    # Extract subtitle transcript if available
+                # ── Transcript extraction via Playwright pipeline ──────────
+                # Primary: Playwright+stealth DOM extraction of YouTube captions.
+                # Fallback: yt-dlp subtitle download (legacy).
+                # Final fallback: faster-whisper CPU transcription (if audio available).
+                transcript = None
+                transcript_language = None
+                transcript_source = None
+                transcript_segments_json = None
+
+                # Method 1: Playwright-based DOM transcript extraction (bypasses HuggingFace IP bans)
+                if sr.platform == "youtube":
+                    try:
+                        logger.info("DOWNLOAD | Trying Playwright transcript for %s", sr.video_url[:60])
+                        pw_result = await transcript_service.get_transcript(
+                            video_url=sr.video_url,
+                            audio_download_dir=settings.AUDIO_DIR,
+                        )
+                        if pw_result and pw_result.get("text", "").strip():
+                            transcript = pw_result["text"]
+                            transcript_language = pw_result.get("language")
+                            transcript_source = pw_result.get("source", "auto_captions")
+                            if pw_result.get("segments"):
+                                transcript_segments_json = json.dumps(pw_result["segments"])
+                                logger.info(
+                                    "DOWNLOAD | Playwright transcript OK: %d chars, source=%s, lang=%s",
+                                    len(transcript), transcript_source, transcript_language,
+                                )
+                    except YouTubeTranscriptError as e:
+                        logger.warning("DOWNLOAD | Playwright transcript failed for %s: %s", sr.video_id[:8], e)
+                    except Exception as e:
+                        logger.warning("DOWNLOAD | Playwright transcript error (non-fatal): %s", e)
+
+                # Method 2: Fallback to yt-dlp subtitle extraction (if Playwright failed)
+                if not transcript:
                     subtitles = dl_result.get("subtitles")
-                    transcript = None
-                    transcript_language = None
-                    transcript_source = None
-                    transcript_segments_json = None
                     if subtitles and isinstance(subtitles, dict) and subtitles.get("text"):
                         transcript = subtitles["text"]
                         transcript_language = subtitles.get("language")
                         transcript_source = subtitles.get("source", "auto_subtitles")
-                        # Save segments with timestamps — enables clip extraction without Whisper
                         if subtitles.get("segments"):
                             transcript_segments_json = json.dumps(subtitles["segments"])
-                            logger.info(f"Saved {len(subtitles['segments'])} subtitle segments for {sr.title[:40]}")
+                            logger.info(
+                                "DOWNLOAD | yt-dlp subtitles OK: %d chars, source=%s",
+                                len(transcript), transcript_source,
+                            )
 
+                # Save to DB
+                async with AsyncSessionLocal() as db:
                     chapters = dl_result.get("chapters")
                     tags = dl_result.get("tags")
                     category = dl_result.get("category")

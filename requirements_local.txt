@@ -51,6 +51,9 @@ edge-tts>=6.1.0
 tiktok-uploader>=1.2.0
 playwright>=1.59.0
 
+# YouTube transcript via headless browser (bypass HuggingFace IP bans)
+playwright-stealth>=2.0.3
+
 # HTTP
 # httpx>=0.28.1 because neonize requires it transitively (see comment above the
 # anthropic/openai pins). Old python-telegram-bot==21.6 wanted httpx~=0.27 — bumped
