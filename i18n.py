@@ -226,6 +226,7 @@ LOCALIZATION = {
         # ─── Dashboard Control Center ────────────────────────
         "tab_control": "Control Center",
         "section_scout_launcher": "Trend Scout & Pipeline Launcher",
+        "section_manual_transcript": "🟢 Manual Transcript Input (Optional)",
         "section_agent_chat": "Agent Chat",
         "tab_library_tools": "Library & Tools",
         "tab_messaging_title": "Messaging",
@@ -497,6 +498,7 @@ LOCALIZATION = {
         # ─── Dashboard Control Center ────────────────────────
         "tab_control": "控制中心",
         "section_scout_launcher": "趋势搜寻与管线启动器",
+        "section_manual_transcript": "🟢 手动输入视频文案/字幕 (可选)",
         "section_agent_chat": "智能体对话",
         "tab_library_tools": "媒体库与工具",
         "tab_messaging_title": "消息渠道",

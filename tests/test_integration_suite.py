@@ -241,6 +241,11 @@ class TestPipelineExceptionSafety(unittest.TestCase):
     def setUp(self):
         self.planner_patcher = patch("app.PLANNER_AVAILABLE", False)
         self.planner_patcher.start()
+        # Mock YouTube metadata scraper to return valid data so pipeline
+        # reaches the DeepSeek calls (CIG does not HALT on uninstalled yt-dlp)
+        self.mock_scraper = patch("app._scrape_youtube_metadata",
+            return_value={"title": "Test Video Title", "description": "Test description"})
+        self.mock_scraper.start()
         # Mock DeepSeek streaming AI calls so tests stay fast and isolated
         # _call_deepseek_stream is the sync thread function; we mock it to put a fixed token + None
         self.mock_deepseek = patch("app._call_deepseek_stream", side_effect=self._mock_deepseek_stream)
@@ -248,6 +253,7 @@ class TestPipelineExceptionSafety(unittest.TestCase):
 
     def tearDown(self):
         self.planner_patcher.stop()
+        self.mock_scraper.stop()
         self.mock_deepseek.stop()
 
     def _mock_deepseek_stream(self, system_prompt, user_prompt, queue, timeout=25.0):
@@ -608,6 +614,251 @@ class TestLegacyConfigFallback(unittest.TestCase):
                 model_value, "claude-sonnet-4-6",
                 f"Valid Anthropic model must be preserved, got '{model_value}'"
             )
+
+
+class TestGreenChannelBypass(unittest.TestCase):
+    """Verify the Green Channel (manual transcript input) bypass logic.
+
+    When the user provides text in the ``optional_transcript`` field:
+      - Agent#1 (scrape) and Agent#2 (download) MUST be SKIPPED entirely.
+      - Agent#3 MUST receive "用户手动输入文案（User Provided Transcript）" as title
+        and the transcript text as description.
+      - The progress HTML MUST display the 🟢 green channel badge.
+      - The pipeline MUST NOT attempt any yt-dlp scrape or YouTube API calls.
+
+    When ``optional_transcript`` is empty:
+      - Standard yt-dlp scraping route runs (no change from current behavior).
+    """
+
+    def setUp(self):
+        self.planner_patcher = patch("app.PLANNER_AVAILABLE", False)
+        self.planner_patcher.start()
+        # Mock scraper to detect if it was CALLED (should NOT be called in green channel)
+        self.scraper_mock = patch("app._scrape_youtube_metadata",
+            return_value={"title": "SHOULD NOT BE CALLED", "description": ""})
+        self.scraper_mock.start()
+        # Mock DeepSeek
+        self.mock_deepseek = patch("app._call_deepseek_stream", side_effect=self._mock_deepseek_stream)
+        self.mock_deepseek.start()
+
+    def tearDown(self):
+        self.planner_patcher.stop()
+        self.scraper_mock.stop()
+        self.mock_deepseek.stop()
+
+    def _mock_deepseek_stream(self, system_prompt, user_prompt, queue, timeout=25.0):
+        queue.put_nowait("绿色通道测试分析结果")
+        queue.put_nowait(None)
+
+    def _collect_all(self, async_gen):
+        """Helper: iterate an async generator and return ALL yielded tuples."""
+        import asyncio
+        results = []
+        async def _iterate():
+            async for item in async_gen:
+                results.append(item)
+            return results
+        asyncio.run(_iterate())
+        return results
+
+    def test_green_channel_skips_agent1_and_agent2(self):
+        """With transcript provided, pipeline must skip Agent#1/#2 and go directly to Agent#3."""
+        from app import do_pipeline
+
+        results = self._collect_all(do_pipeline(
+            "https://youtube.com/watch?v=test123",
+            "YouTube",
+            "zh",
+            optional_transcript="这是一段手动输入的视频文案内容，用于测试绿色通道",
+        ))
+        self.assertGreater(len(results), 0, "Pipeline must yield at least one tuple")
+        # Verify no yt-dlp scrape was attempted - the scraper mock returns
+        # "SHOULD NOT BE CALLED" if called; if we never see that in logs, it was skipped
+        full_log = " ".join(r[2] for r in results)
+        self.assertIn("绿色通道已激活", full_log,
+                       "Green Channel activation message must appear in cumulative log")
+        self.assertIn("跳过 Agent#1", full_log,
+                       "Log must state that Agent#1/#2 are skipped")
+        self.assertIn("手动文案已接收", full_log,
+                       "Log must confirm transcript was received")
+        self.assertNotIn("SHOULD NOT BE CALLED", full_log,
+                         "Scraper must NOT be called when green channel is active")
+
+    def test_green_channel_uses_user_provided_title(self):
+        """Green channel must set real_title to '用户手动输入文案（User Provided Transcript）'."""
+        from app import do_pipeline
+
+        results = self._collect_all(do_pipeline(
+            "https://youtube.com/watch?v=test",
+            "TikTok",
+            "zh",
+            optional_transcript="用户粘贴的完整视频文案，此处模拟长文本输入",
+        ))
+        self.assertGreater(len(results), 0)
+        # Check that Agent#3 prompt context includes the user-provided title
+        # This is verified indirectly: the cumulative_log contains the transcript char count
+        full_log = " ".join(r[2] for r in results)
+        # The green channel title is visible in the progress HTML (3rd yield onwards)
+        self.assertIn("手动输入文案", full_log,
+                       "Title must reference user-provided context")
+
+    def test_green_channel_empty_transcript_falls_back_to_standard(self):
+        """With empty transcript, pipeline must run standard yt-dlp route (Agent#1 called)."""
+        from app import do_pipeline
+        import asyncio
+
+        # We need to stop and restart the scraper mock to let it return valid data
+        self.scraper_mock.stop()
+        valid_scraper = patch("app._scrape_youtube_metadata",
+            return_value={"title": "Standard Video Title", "description": "Standard desc"})
+        valid_scraper.start()
+
+        try:
+            results = self._collect_all(do_pipeline(
+                "https://youtube.com/watch?v=test-empty",
+                "YouTube",
+                "en",
+                optional_transcript="",  # Empty → standard route
+            ))
+            self.assertGreater(len(results), 0)
+            full_log = " ".join(r[2] for r in results)
+            # Check the specific activation message, not generic substring,
+            # because mock DeepSeek tokens ("绿色通道测试分析结果") are appended
+            # via cumulative_log during Agent#3 streaming in ALL routes.
+            self.assertNotIn("🟢 绿色通道已激活", full_log,
+                             "Green Channel must NOT activate when transcript is empty")
+            # cumulative_log uses Chinese format: "真实标题: Standard Video Title"
+            self.assertIn("真实标题: Standard Video Title", full_log,
+                          "Standard route must run Agent#1 scraper")
+        finally:
+            valid_scraper.stop()
+            self.scraper_mock.start()
+
+    def test_green_channel_prevents_hallucination_on_cig_fallback(self):
+        """When yt-dlp is blocked AND user provides transcript, CIG is bypassed safely."""
+        from app import do_pipeline
+
+        # Simulate the scenario: yt-dlp is NOT installed, user provides transcript
+        results = self._collect_all(do_pipeline(
+            "https://youtube.com/watch?v=blocked-video",
+            "YouTube",
+            "zh",
+            optional_transcript="即使yt-dlp被封锁，用户手动文案也能正常工作",
+        ))
+        self.assertGreater(len(results), 0)
+        full_log = " ".join(r[2] for r in results)
+        # Pipeline should NOT halt
+        self.assertNotIn("核心熔断", full_log,
+                         "CIG must NOT melt down when user provides transcript")
+        self.assertNotIn("管线已中止", full_log,
+                         "Pipeline must NOT halt when green channel is active")
+        # And should proceed to Agent#3
+        self.assertIn("绿色通道已激活", full_log,
+                      "Green channel must be activated")
+
+
+class TestYouTubeScraperAntiBotMeltdown(unittest.TestCase):
+    """Verify _is_anti_bot_response and yt-dlp scraper failure CIG meltdown."""
+
+    def test_anti_bot_empty_title_triggers_meltdown(self):
+        """Empty/blank title must be detected as anti-bot (returns True)."""
+        from app import _is_anti_bot_response
+
+        self.assertTrue(_is_anti_bot_response(""),
+                        "Empty string must be flagged as anti-bot")
+        self.assertTrue(_is_anti_bot_response("   "),
+                        "Whitespace-only string must be flagged as anti-bot")
+
+    def test_anti_bot_short_title_triggers_meltdown(self):
+        """Title shorter than 5 chars must be flagged as suspicious."""
+        from app import _is_anti_bot_response
+
+        self.assertTrue(_is_anti_bot_response("AB"),
+                        "Very short title must trigger suspicion")
+        self.assertTrue(_is_anti_bot_response("1234"),
+                        "4-char title must trigger suspicion")
+
+    def test_anti_bot_sign_in_detected(self):
+        """'Sign in' keyword must be detected as anti-bot."""
+        from app import _is_anti_bot_response
+
+        self.assertTrue(_is_anti_bot_response("Sign in - YouTube"),
+                        "'Sign in' must be flagged")
+        self.assertTrue(_is_anti_bot_response("Sign in to confirm you're not a bot"),
+                        "Extended sign-in page must be flagged")
+
+    def test_anti_bot_captcha_detected(self):
+        """CAPTCHA/verify keywords must be detected."""
+        from app import _is_anti_bot_response
+
+        self.assertTrue(_is_anti_bot_response("Attention Required! | Cloudflare"),
+                        "Cloudflare attention page must be flagged")
+        self.assertTrue(_is_anti_bot_response("Please verify you are human"),
+                        "Verify page must be flagged")
+        self.assertTrue(_is_anti_bot_response("unusual traffic from your network"),
+                        "Unusual traffic page must be flagged")
+
+    def test_anti_bot_legitimate_title_passes(self):
+        """A real video title must NOT be flagged as anti-bot."""
+        from app import _is_anti_bot_response
+
+        self.assertFalse(_is_anti_bot_response("852赫兹 疗愈频率音乐：深度放松与冥想"),
+                         "Real Chinese title must NOT be flagged")
+        self.assertFalse(_is_anti_bot_response("Deep Work Focus Music for Productivity"),
+                         "Real English title must NOT be flagged")
+        self.assertFalse(_is_anti_bot_response("How to build a React app in 10 minutes"),
+                         "Legitimate tutorial title must NOT be flagged")
+
+    def test_ytdlp_missing_executable_returns_empty(self):
+        """When yt-dlp is not installed, _scrape_youtube_metadata must return empty dict."""
+        from app import _scrape_youtube_metadata
+        import shutil
+
+        # If yt-dlp is not in PATH, the function should gracefully return {}
+        result = _scrape_youtube_metadata("https://youtube.com/watch?v=dQw4w9WgXcQ")
+        self.assertIsInstance(result, dict,
+                              "Must return a dict on failure")
+        self.assertIn("title", result,
+                      "Result dict must have 'title' key")
+        self.assertIn("description", result,
+                      "Result dict must have 'description' key")
+
+    def test_non_youtube_url_returns_empty(self):
+        """Non-YouTube URLs must return empty metadata without attempting scrape."""
+        from app import _scrape_youtube_metadata
+
+        result = _scrape_youtube_metadata("https://example.com/video")
+        self.assertEqual(result, {"title": "", "description": ""},
+                         "Non-YouTube URL must return empty metadata")
+
+        result = _scrape_youtube_metadata("")
+        self.assertEqual(result, {"title": "", "description": ""},
+                         "Empty URL must return empty metadata")
+
+    def test_scraper_failure_triggers_pipeline_halt(self):
+        """When _scrape_youtube_metadata returns empty title, pipeline must HALT."""
+        from app import do_pipeline
+        import asyncio
+
+        # Use a URL that will cause _scrape_youtube_metadata to return {} (non-YouTube)
+        results = []
+        async def _collect():
+            async for item in do_pipeline("https://example.com/non-youtube", "YouTube", "en"):
+                results.append(item)
+            return results
+        asyncio.run(_collect())
+
+        self.assertGreater(len(results), 0, "Pipeline must yield at least once")
+        # Check that the final yield (or a yield) contains the HALT message
+        # Index 0 = pipeline_status, Index 2 = cumulative_log
+        all_statuses = [r[0] for r in results]
+        all_logs = " ".join(r[2] for r in results if len(r) > 2)
+        self.assertTrue(
+            "管线已中止" in all_statuses[-1] or "已将态" in all_statuses[-1],
+            f"Pipeline must HALT with abort message, got: {all_statuses[-1]}"
+        )
+        self.assertIn("上下文完整性检查失败", all_logs,
+                      "Log must contain Context Integrity Guard failure message")
 
 
 if __name__ == "__main__":

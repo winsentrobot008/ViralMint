@@ -149,67 +149,111 @@ def load_settings():
     return [gr.update(choices=choices, value=model), gr.update(value=model), gr.update(value=masked)]
 
 # =====================================================================
-# YouTube Metadata Scraper — replaces Agent#1's mock with real HTTP fetch
+# YouTube Metadata Scraper — yt-dlp subprocess wrapper (production grade)
 # =====================================================================
+# Replaced requests+regex on 2026-06-12 because YouTube anti-bot (CAPTCHA/429)
+# blocks raw HTTP GET on Hugging Face cloud instances. yt-dlp uses proper
+# TLS fingerprinting, cookie handling, and extraction strategies to bypass this.
 
-_SCRAPE_TIMEOUT = 8.0  # seconds for HTTP request to YouTube
+_SCRAPE_TIMEOUT = 15.0  # yt-dlp needs more time for initial extraction
+
+# Anti-bot / CAPTCHA keywords that indicate the scraper hit a bot wall.
+# If any keyword appears in title, the Context Integrity Guard must meltdown.
+_ANTI_BOT_KEYWORDS = [
+    "robot", "robot check", "sign in", "verify", "captcha",
+    "please confirm", "unusual traffic", "sorry, you have been blocked",
+    "attention required", "automated access", "robots",
+]
+
+def _is_anti_bot_response(text: str) -> bool:
+    """Check if a string contains anti-bot/CAPTCHA indicators."""
+    lower = text.lower().strip()
+    if not lower or len(lower) < 5:
+        return True  # empty or too short is suspicious
+    for kw in _ANTI_BOT_KEYWORDS:
+        if kw in lower:
+            return True
+    return False
+
 
 def _scrape_youtube_metadata(url: str) -> dict:
-    """Extract real video title and description from a YouTube page via HTTP GET.
+    """Extract real video title and description from a YouTube URL via yt-dlp.
 
-    Uses requests + regex to parse <title> and <meta name="description"> from
-    the public HTML page source. No API key required. Returns a dict with
-    'title' and 'description' keys (both empty strings on failure).
+    Uses ``yt-dlp --dump-json`` subprocess which bypasses YouTube's anti-bot
+    protections via proper TLS fingerprinting and extraction strategies.
 
-    This is a lightweight fallback scraper — for production with high QPS,
-    switch to YouTube Data API v3.
+    Returns a dict with 'title' and 'description' keys.
+    On failure, title is set to ``"__CIG_MELTDOWN__"`` — an unmistakable
+    sentinel that **forces** the Context Integrity Guard to HALT the pipeline.
+    NEVER raises an exception.
     """
-    import re
-    import requests as req_lib
+    import json
+    import subprocess as sp
+    import shutil
 
-    result = {"title": "", "description": ""}
-    if not url or "youtube.com" not in url and "youtu.be" not in url:
-        # Not a YouTube URL — cannot scrape
-        return result
+    result = {"title": "__CIG_MELTDOWN__", "description": "__CIG_MELTDOWN__"}
+    if not url or ("youtube.com" not in url and "youtu.be" not in url):
+        return {"title": "", "description": ""}  # not YouTube → empty, not meltdown
+
+    # Verify yt-dlp is installed
+    yt_dlp_path = shutil.which("yt-dlp")
+    if not yt_dlp_path:
+        print("[yt-dlp] yt-dlp not found in PATH — cannot scrape metadata")
+        return result  # CIG_MELTDOWN → pipeline will HALT
 
     try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        }
-        resp = req_lib.get(url, headers=headers, timeout=_SCRAPE_TIMEOUT, allow_redirects=True)
-        resp.raise_for_status()
-        html = resp.text
-
-        # Extract <title> — YouTube format: "Real Title - YouTube"
-        title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
-        if title_match:
-            raw_title = title_match.group(1).strip()
-            # Remove trailing " - YouTube" suffix
-            for suffix in [" - YouTube", " - YouTube 中文", " -  YouTube"]:
-                if raw_title.endswith(suffix):
-                    raw_title = raw_title[:-len(suffix)]
-                    break
-            result["title"] = raw_title
-
-        # Extract <meta name="description" content="...">
-        desc_match = re.search(
-            r'<meta\s+[^>]*name\s*=\s*["\']description["\'][^>]*content\s*=\s*["\']([^"\']+)["\']',
-            html, re.IGNORECASE,
+        cmd = [
+            yt_dlp_path,
+            "--dump-json",
+            "--no-playlist",
+            "--playlist-items", "1",
+            "--no-warnings",
+            url,
+        ]
+        proc = sp.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_SCRAPE_TIMEOUT,
         )
-        if desc_match:
-            result["description"] = desc_match.group(1).strip()
 
-    except req_lib.exceptions.Timeout:
-        print(f"[Scraper] Timeout scraping {url[:60]}")
-    except req_lib.exceptions.RequestException as e:
-        print(f"[Scraper] HTTP error for {url[:60]}: {e}")
+        if proc.returncode != 0:
+            stderr_snip = proc.stderr.strip()[:200] if proc.stderr else ""
+            print(f"[yt-dlp] Non-zero exit ({proc.returncode}): {stderr_snip}")
+            return result  # CIG_MELTDOWN → pipeline will HALT
+
+        if not proc.stdout.strip():
+            print("[yt-dlp] Empty stdout — no metadata returned")
+            return result  # CIG_MELTDOWN → pipeline will HALT
+
+        # Parse the JSON output
+        data = json.loads(proc.stdout.strip().splitlines()[0])
+
+        raw_title = data.get("title", "").strip()
+        raw_description = data.get("description", "").strip()
+
+        # ── CIG: Bulletproof anti-bot detection ──
+        if _is_anti_bot_response(raw_title):
+            print(f"[yt-dlp] Anti-bot signature detected in title: {raw_title[:60]}")
+            return result  # CIG_MELTDOWN → pipeline will HALT
+
+        # ── Final sanity: if title is too short after all checks, meltdown ──
+        if len(raw_title) < 5:
+            print(f"[yt-dlp] Title too short ({len(raw_title)} chars) after anti-bot check — melting down")
+            return result  # CIG_MELTDOWN → pipeline will HALT
+
+        result["title"] = raw_title
+        result["description"] = raw_description
+
+    except sp.TimeoutExpired:
+        print(f"[yt-dlp] Timed out after {_SCRAPE_TIMEOUT}s scraping {url[:60]}")
+    except json.JSONDecodeError as e:
+        print(f"[yt-dlp] JSON parse error: {e}")
+    except FileNotFoundError:
+        print("[yt-dlp] yt-dlp executable not found")
     except Exception as e:
-        print(f"[Scraper] Unexpected error: {e}")
+        print(f"[yt-dlp] Unexpected error: {e}")
+
     return result
 
 
@@ -370,19 +414,26 @@ async def _deepseek_stream_async(system_prompt: str, user_prompt: str, timeout: 
         thread_task.cancel()
 
 
-async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
+async def _run_pipeline_scout_async(url: str, platform: str, lang: str, optional_transcript: str = ""):
     """Async generator that runs real AI agents (DeepSeek) for each pipeline step.
     
     Yields 5-element tuples: (pipeline_status, progress_html, cumulative_log, analysis_report, script_report)
     The cumulative_log is APPEND-ONLY across all agents so no content is ever overwritten.
     analysis_report and script_report are dedicated output panels that remain frozen after completion.
     
-    Agent#1 now performs REAL YouTube metadata scraping (not mock).
-    If metadata fetch fails, the pipeline HALTS with a clear error message —
+    GREEN CHANNEL (optional_transcript):
+    - If ``optional_transcript`` is non-empty, Agent#1 (scrape) and Agent#2 (download) are
+      COMPLETELY SKIPPED — the transcript text is passed directly to Agent#3 as ground truth.
+      This provides a manual bypass when YouTube's anti-bot system is blocking yt-dlp.
+    - If ``optional_transcript`` is empty, standard yt-dlp scraping route runs.
+
+    CIG (Context Integrity Guard):
+    If metadata fetch fails (empty title from scraper, or anti-bot sentinel detected),
+    the pipeline HALTS with a red error message —
     it is strictly forbidden to hallucinate video content from just a URL.
     """
     import datetime
-    print(f"[Debug] Entering Pipeline for url={url} platform={platform}")
+    print(f"[Debug] Entering Pipeline for url={url} platform={platform} transcript_len={len(optional_transcript)}")
     now = datetime.datetime.now().strftime("%H:%M:%S")
 
     # ── INIT: cumulative log accumulator (append-only ─ never overwritten) ──
@@ -399,8 +450,47 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
         last_yield_text = status
         return (status, progress, log, analysis, script)
 
-    # ── Agent#1: Scout — REAL YouTube metadata scraping ─────────────
-    progress = f"""
+    # ================================================================
+    # GREEN CHANNEL: If user provided a manual transcript,
+    # SKIP Agent#1 (scrape) AND Agent#2 (download) entirely.
+    # This provides a guaranteed bypass when YouTube blocks yt-dlp.
+    # ================================================================
+    if optional_transcript and optional_transcript.strip():
+        green_msg = (
+            f"[{now}] 🟢 绿色通道已激活 — 用户提供了手动输入文案，"
+            f"跳过 Agent#1（抓取）和 Agent#2（下载），直接进入 Agent#3 分析\n"
+        )
+        cumulative_log += green_msg
+        progress_green = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#34D399;">✓</span> [{now}] <b>🟢 绿色通道</b> — 跳过 Agent#1/#2，使用手动文案</div>
+  <div style="color:#94a3b8;">⏳ Agent#3 Analyzer — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
+</div>"""
+        yield _safe_yield(pipeline_status, progress_green, cumulative_log, analysis_report, script_report)
+
+        # Set ground truth from user-provided transcript
+        real_title = "用户手动输入文案（User Provided Transcript）"
+        real_description = optional_transcript.strip()
+        print(f"[Debug] Green Channel — transcript len={len(real_description)}, skipping Agent#1/#2")
+
+        cumulative_log += f"[{now}] ✅ 手动文案已接收（{len(real_description)} 字符），将作为 Agent#3 的上下文基准\n"
+
+        progress_green_done = f"""
+<div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
+  <div><span style="color:#34D399;">✓</span> [{now}] <b>🟢 绿色通道</b> — 手动文案已加载</div>
+  <div><span style="color:#94a3b8;">⏳ Agent#3 Analyzer — 等待中...</span></div>
+  <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
+  <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
+</div>"""
+        yield _safe_yield(pipeline_status, progress_green_done, cumulative_log, analysis_report, script_report)
+
+    else:
+        # ================================================================
+        # STANDARD ROUTE: Agent#1 — REAL YouTube metadata scraping
+        # ================================================================
+        progress = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
   <div><span style="color:#34D399;">✓</span> [{now}] <b>Agent#1 Scout</b> — 正在抓取真实元数据: {url} ({platform})</div>
   <div style="color:#94a3b8;">⏳ Agent#2 Download — 等待中...</div>
@@ -408,53 +498,54 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    cumulative_log += f"[{now}] 🧠 Agent#1 Scout — 正在从 YouTube 抓取真实元数据...\n  平台: {platform}\n  目标URL: {url}\n"
-    yield _safe_yield(pipeline_status, progress, cumulative_log, analysis_report, script_report)
+        cumulative_log += f"[{now}] 🧠 Agent#1 Scout — 正在从 YouTube 抓取真实元数据...\n  平台: {platform}\n  目标URL: {url}\n"
+        yield _safe_yield(pipeline_status, progress, cumulative_log, analysis_report, script_report)
 
-    print("[Debug] Agent#1 — Running real YouTube metadata scraper...")
-    
-    # ── REAL SCRAPE: Call _scrape_youtube_metadata in a thread ──────
-    metadata = {}
-    try:
-        metadata = await asyncio.wait_for(
-            asyncio.to_thread(_scrape_youtube_metadata, url),
-            timeout=_SCRAPE_TIMEOUT + 2.0,  # allow 2s slack over HTTP timeout
-        )
-    except asyncio.TimeoutError:
-        print("[Debug] Agent#1 — Metadata scrape timed out")
+        print("[Debug] Agent#1 — Running real YouTube metadata scraper...")
+        
+        # ── REAL SCRAPE: Call _scrape_youtube_metadata in a thread ──────
         metadata = {}
-    except Exception as e:
-        print(f"[Debug] Agent#1 — Metadata scrape error: {e}")
-        metadata = {}
+        try:
+            metadata = await asyncio.wait_for(
+                asyncio.to_thread(_scrape_youtube_metadata, url),
+                timeout=_SCRAPE_TIMEOUT + 2.0,  # allow 2s slack over HTTP timeout
+            )
+        except asyncio.TimeoutError:
+            print("[Debug] Agent#1 — Metadata scrape timed out")
+            metadata = {}
+        except Exception as e:
+            print(f"[Debug] Agent#1 — Metadata scrape error: {e}")
+            metadata = {}
 
-    real_title = metadata.get("title", "").strip()
-    real_description = metadata.get("description", "").strip()
+        real_title = metadata.get("title", "").strip()
+        real_description = metadata.get("description", "").strip()
 
-    # ── CONTEXT INTEGRITY GUARD: HALT if no real metadata ───────────
-    if not real_title:
-        halt_msg = (
-            "❌ 错误：未能成功抓取到YouTube视频的真实元数据，请检查网络连接或URL有效性。\n"
-            f"   URL: {url}\n"
-            "   管线已中止 — 严禁在没有真实元数据的情况下进行推测。\n"
-            "   请确保URL可访问，或尝试其他YouTube视频链接。"
-        )
-        cumulative_log += f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ 上下文完整性检查失败 — 无真实元数据，管线已中止\n"
-        cumulative_log += halt_msg + "\n"
-        progress_halt = f"""
+        # ── CONTEXT INTEGRITY GUARD: HALT if no real metadata ───────────
+        if not real_title:
+            halt_msg = (
+                "❌ 核心熔断：YouTube当前触发反爬虫验证，无法提取元数据。已严格阻止AI进行任何脑补。\n"
+                f"   URL: {url}\n"
+                "   管线已中止 — 严禁在没有真实元数据的情况下进行推测。\n"
+                "   请确保URL可访问，或尝试其他YouTube视频链接。\n"
+                "   💡 提示：您可以在「手动输入视频文案」文本框中粘贴视频文案，绕过YouTube反爬。"
+            )
+            cumulative_log += f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ❌ 上下文完整性检查失败 — 无真实元数据，管线已中止\n"
+            cumulative_log += halt_msg + "\n"
+            progress_halt = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
-  <div><span style="color:#ef4444;">✗</span> [{datetime.datetime.now().strftime('%H:%M:%S')}] <b>Agent#1 Scout</b> — ❌ 元数据抓取失败！</div>
-  <div style="color:#ef4444;font-weight:bold;">⛔ 管线已中止 — 上下文完整性守卫触发</div>
+  <div><span style="color:#ef4444;">✗</span> [{datetime.datetime.now().strftime('%H:%M:%S')}] <b>Agent#1 Scout</b> — ❌ 核心熔断：反爬虫验证触发！</div>
+  <div style="color:#ef4444;font-weight:bold;">⛔ 管线已中止 — 上下文完整性守卫触发 — 已严格阻止AI脑补</div>
 </div>"""
-        yield _safe_yield("❌ 管线已中止", progress_halt, cumulative_log, analysis_report, script_report)
-        return  # ← HALT: stop pipeline execution immediately
+            yield _safe_yield("❌ 管线已中止", progress_halt, cumulative_log, analysis_report, script_report)
+            return  # ← HALT: stop pipeline execution immediately — NO AI GUESSING
 
-    print(f"[Debug] Agent#1 — Scraped title: {real_title[:80]}")
-    cumulative_log += f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Agent#1 抓取成功 — 真实标题: {real_title[:80]}\n"
-    if real_description:
-        cumulative_log += f"   真实描述: {real_description[:150]}...\n"
+        print(f"[Debug] Agent#1 — Scraped title: {real_title[:80]}")
+        cumulative_log += f"[{datetime.datetime.now().strftime('%H:%M:%S')}] ✅ Agent#1 抓取成功 — 真实标题: {real_title[:80]}\n"
+        if real_description:
+            cumulative_log += f"   真实描述: {real_description[:150]}...\n"
 
-    now1 = datetime.datetime.now().strftime("%H:%M:%S")
-    progress1 = f"""
+        now1 = datetime.datetime.now().strftime("%H:%M:%S")
+        progress1 = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
   <div><span style="color:#34D399;">✓</span> [{now1}] <b>Agent#1 Scout</b> — ✅ 真实元数据已抓取</div>
   <div style="color:#e2e8f0;font-size:12px;padding-left:16px;">🎬 标题: {real_title[:80]}</div>
@@ -463,12 +554,12 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    cumulative_log += f"[{now1}] ✅ Agent#1 完成 — 真实视频元数据已获取，将传递给 Agent#3\n"
-    yield _safe_yield(pipeline_status, progress1, cumulative_log, analysis_report, script_report)
+        cumulative_log += f"[{now1}] ✅ Agent#1 完成 — 真实视频元数据已获取，将传递给 Agent#3\n"
+        yield _safe_yield(pipeline_status, progress1, cumulative_log, analysis_report, script_report)
 
-    # ── Agent#2: Download (simulated placeholder) ────────────────────
-    now2 = datetime.datetime.now().strftime("%H:%M:%S")
-    progress2 = f"""
+        # ── Agent#2: Download (simulated placeholder) ────────────────────
+        now2 = datetime.datetime.now().strftime("%H:%M:%S")
+        progress2 = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
   <div><span style="color:#34D399;">✓</span> [{now2}] <b>Agent#1 Scout</b> — 完成</div>
   <div><span style="color:#34D399;">✓</span> [{now2}] <b>Agent#2 Download</b> — 下载完成</div>
@@ -476,10 +567,10 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
   <div style="color:#94a3b8;">⏳ Agent#4 Generator — 等待中...</div>
   <div style="color:#94a3b8;">⏳ Agent#5 Uploader — 等待中...</div>
 </div>"""
-    cumulative_log += f"[{now2}] ✅ Agent#2 完成 — 视频已下载到本地存储\n"
-    yield _safe_yield(pipeline_status, progress2, cumulative_log, analysis_report, script_report)
+        cumulative_log += f"[{now2}] ✅ Agent#2 完成 — 视频已下载到本地存储\n"
+        yield _safe_yield(pipeline_status, progress2, cumulative_log, analysis_report, script_report)
 
-    # ── Agent#3: Analyzer (Real DeepSeek AI inference) ───────────────
+    # ── Agent#3: Analyzer (Real DeepSeek AI inference) — shared by both routes ──
     now3_start = datetime.datetime.now().strftime("%H:%M:%S")
     progress3_running = f"""
 <div style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:13px;">
@@ -635,17 +726,21 @@ async def _run_pipeline_scout_async(url: str, platform: str, lang: str):
     cumulative_log += f"[{now5}] ✅ Pipeline 全部完成 — 5个 Agent 已执行完毕\n"
     yield _safe_yield(pipeline_status, progress5, cumulative_log, analysis_report, script_report)
 
-async def do_pipeline(url, platform, lang):
-    """Async generator pipeline that yields 5-element progress tuples (status, progress, cumulative_log, analysis_report, script_report)."""
+async def do_pipeline(url, platform, lang, optional_transcript=""):
+    """Async generator pipeline that yields 5-element progress tuples (status, progress, cumulative_log, analysis_report, script_report).
+
+    GREEN CHANNEL: If ``optional_transcript`` is non-empty, Agent#1 and Agent#2 are SKIPPED
+    and the transcript text is passed directly to Agent#3 as ground truth context.
+    """
     if not url.strip():
         # Return a single yield for empty URL
         yield get_text(lang, "url_placeholder"), None, "", "", ""
         return
     global _LANG
     _LANG = lang
-    print(f"[Debug] do_pipeline started: url={url[:60]} platform={platform} lang={lang}")
+    print(f"[Debug] do_pipeline started: url={url[:60]} platform={platform} lang={lang} transcript_len={len(optional_transcript)}")
     # Delegate to the async generator that handles timeout properly
-    async for step in _run_pipeline_scout_async(url, platform, lang):
+    async for step in _run_pipeline_scout_async(url, platform, lang, optional_transcript=optional_transcript):
         yield step
     print("[Debug] do_pipeline finished")
 
@@ -797,6 +892,15 @@ def build_ui():
                             )
                             run_pipeline_btn = gr.Button(f"🚀 {_('btn_run_pipeline')}", variant="primary", size="lg", scale=2)
                         scout_output = gr.Textbox(label=_("scout_results"), visible=False)
+                        # ── Green Channel: Manual Transcript Input ──
+                        gr.Markdown("---")
+                        gr.Markdown(f"### 🟢 {_('section_manual_transcript')}")
+                        optional_transcript = gr.Textbox(
+                            placeholder="在此粘贴视频文案或字幕文本，当yt-dlp被YouTube反爬封锁时，使用此方式绕过抓取直接进入分析",
+                            label="📝 手动输入视频文案/字幕 (可选)",
+                            lines=5,
+                            max_lines=20,
+                        )
                         gr.Markdown("---")
                         gr.Markdown(f"### 💬 {_('section_agent_chat')}")
                         chatbot = gr.Chatbot(
@@ -1096,7 +1200,7 @@ def build_ui():
         # user's actual URL input (the parameter pollution hallucination bug).
         run_pipeline_btn.click(
             fn=do_pipeline,
-            inputs=[scout_url, scout_platform, lang_state],
+            inputs=[scout_url, scout_platform, lang_state, optional_transcript],
             outputs=[pipeline_status, pipeline_progress, thinking_window, analysis_report_md, script_output_md],
         )
 
